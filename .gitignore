@@ -1,6 +1,7 @@
 # Environment variables
 .env
-app/server/.env
+.env.local
+*.env
 
 # Python
 __pycache__/

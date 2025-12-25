@@ -10,7 +10,6 @@
       "Bash(ls:*)",
       "Bash(cp:*)",
       "Write",
-      "Bash(./scripts/copy_dot_env.sh:*)",
       "Bash(chmod:*)",
       "Bash(touch:*)"
     ],
