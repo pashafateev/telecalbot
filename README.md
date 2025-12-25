@@ -32,48 +32,65 @@ This template provides a complete scaffolding for projects that leverage AI-powe
 
 ## Quick Start
 
-### 1. Clone and Setup
+### Automated Setup (Recommended)
 
 ```bash
-# Clone this template (or use it as a GitHub template)
-git clone <your-repo-url>
-cd <your-project>
+# Clone the template
+gh repo clone pashafateev/adw-template
+
+# Navigate into the directory
+cd adw-template
+
+# Run the initialization script (with your project name)
+./init-project.sh my-awesome-project
+
+# The script will:
+#   - Rename adw-template → my-awesome-project
+#   - Remove template git history
+#   - Initialize fresh git repo
+#   - Copy .env.sample to .env
+#   - Create initial commit
+#   - Optionally set up GitHub remote
+```
+
+### Manual Setup
+
+If you prefer to set up manually:
+
+```bash
+# Clone this template
+gh repo clone pashafateev/adw-template my-project
+cd my-project
+
+# Remove template git history
+rm -rf .git
+git init -b main
 
 # Copy and configure environment variables
 cp .env.sample .env
 # Edit .env and add your API keys
+
+# Create initial commit
+git add .
+git commit -m "Initial commit from adw-template"
+
+# Add your remote
+git remote add origin https://github.com/your-username/my-project.git
 ```
 
-### 2. Configure for Your Project
+### Next Steps
 
-```bash
-# Set required environment variables
-export GITHUB_REPO_URL="https://github.com/owner/repository"
-export ANTHROPIC_API_KEY="sk-ant-xxxx..."
-export CLAUDE_CODE_PATH="claude"  # or full path from 'which claude'
-```
+1. **Edit `.env`** and add your API keys:
+   - `ANTHROPIC_API_KEY`
+   - `GITHUB_REPO_URL`
 
-### 3. Initialize Your Application
+2. **Set up your application** in the `app/` directory:
+   - See `app/README.md` for structure examples (CLI, web app, API, etc.)
+   - Replace the README with your actual application code
 
-The `app/` directory is where your application code lives. See `app/README.md` for structure examples:
+3. **Customize `scripts/start.sh`** for your project's startup needs
 
-- Web application (frontend + backend)
-- CLI tool
-- API service
-- Monorepo
-- Or any other structure
-
-**Replace `app/README.md` with your actual application code.**
-
-### 4. Start Development
-
-```bash
-# Customize scripts/start.sh for your app, then:
-./scripts/start.sh
-
-# Stop services:
-./scripts/stop_apps.sh
-```
+4. **Start building with ADW!**
 
 ## AI Developer Workflows (ADW)
 
