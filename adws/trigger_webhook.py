@@ -20,10 +20,13 @@ Environment Requirements:
 import os
 import subprocess
 import sys
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
 import uvicorn
+from datetime import datetime
 from utils import make_adw_id
+from version import VERSION
+from data_types import QuickHealthResponse
 
 # Load environment variables
 load_dotenv()
@@ -32,9 +35,13 @@ load_dotenv()
 PORT = int(os.getenv("PORT", "8001"))
 
 # Create FastAPI app
-app = FastAPI(title="ADW Webhook Trigger", description="GitHub webhook endpoint for ADW")
+app = FastAPI(
+    title="ADW Webhook Trigger",
+    description="GitHub webhook endpoint for ADW",
+    version=VERSION
+)
 
-print(f"Starting ADW Webhook Trigger on port {PORT}")
+print(f"Starting ADW Webhook Trigger v{VERSION} on port {PORT}")
 
 
 @app.post("/gh-webhook")
@@ -122,9 +129,25 @@ async def github_webhook(request: Request):
         }
 
 
-@app.get("/health")
+@app.get("/health", response_model=QuickHealthResponse)
 async def health():
-    """Health check endpoint - runs comprehensive system health check."""
+    """Quick health check endpoint - returns immediately with basic status."""
+    try:
+        return QuickHealthResponse(
+            status="healthy",
+            version=VERSION,
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            service="adw-webhook-trigger"
+        )
+    except Exception as e:
+        # Log the error but don't expose internal details
+        print(f"Health check error: {e}")
+        raise HTTPException(status_code=503, detail="Service unavailable")
+
+
+@app.get("/health/full")
+async def health_full():
+    """Comprehensive health check endpoint - runs full system health check."""
     try:
         # Run the health check script
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -200,8 +223,10 @@ async def health():
 
 
 if __name__ == "__main__":
+    print(f"Starting ADW Webhook Trigger v{VERSION}")
     print(f"Starting server on http://0.0.0.0:{PORT}")
     print(f"Webhook endpoint: POST /gh-webhook")
-    print(f"Health check: GET /health")
-    
+    print(f"Quick health check: GET /health")
+    print(f"Comprehensive health check: GET /health/full")
+
     uvicorn.run(app, host="0.0.0.0", port=PORT)

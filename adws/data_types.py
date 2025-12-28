@@ -141,3 +141,22 @@ class ClaudeCodeResultMessage(BaseModel):
     result: str
     session_id: str
     total_cost_usd: float
+
+
+class QuickHealthResponse(BaseModel):
+    """Quick health check response model."""
+
+    status: str
+    version: str
+    timestamp: str
+    service: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "healthy",
+                "version": "1.0.0",
+                "timestamp": "2025-12-28T12:00:00.123456Z",
+                "service": "adw-webhook-trigger"
+            }
+        }
