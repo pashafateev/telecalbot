@@ -137,12 +137,21 @@ def classify_issue(
     if not issue_response.success:
         return None, issue_response.output
 
-    issue_command = issue_response.output.strip()
+    # Extract command from output - look for /chore, /bug, /feature, or 0
+    output = issue_response.output.strip()
+    issue_command = None
 
-    if issue_command == "0":
+    # Check for commands in the output
+    for cmd in ["/feature", "/bug", "/chore"]:
+        if cmd in output:
+            issue_command = cmd
+            break
+
+    # Check for "no command" response
+    if issue_command is None and "0" in output:
         return None, f"No command selected: {issue_response.output}"
 
-    if issue_command not in ["/chore", "/bug", "/feature"]:
+    if issue_command is None:
         return None, f"Invalid command selected: {issue_response.output}"
 
     return issue_command, None  # type: ignore
