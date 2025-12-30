@@ -3,6 +3,16 @@
 **Created**: 2025-12-29
 **Based on Specification**: telecalbot-specification.md v2.0 (2025-12-26)
 **Total Estimated Duration**: 2-3 weeks
+**Tracking Issue**: [#3](https://github.com/pashafateev/telecalbot/issues/3)
+
+## GitHub Issues
+
+- [ ] [#4 Phase 0: Cal.com API Research & Validation](https://github.com/pashafateev/telecalbot/issues/4)
+- [ ] [#5 Phase 1: Project Foundation & Basic Bot Setup](https://github.com/pashafateev/telecalbot/issues/5)
+- [ ] [#6 Phase 2: Access Control & Whitelist System](https://github.com/pashafateev/telecalbot/issues/6)
+- [ ] [#7 Phase 3: Cal.com API Client with Caching & Retry Logic](https://github.com/pashafateev/telecalbot/issues/7)
+- [ ] [#8 Phase 4: Booking Conversation Flow with Telegram ConversationHandler](https://github.com/pashafateev/telecalbot/issues/8)
+- [ ] [#9 Phase 5: Integration Testing, Polish & Deployment](https://github.com/pashafateev/telecalbot/issues/9)
 
 ---
 
@@ -65,6 +75,7 @@ After analyzing the 1592-line specification, here are the **5 core technical cha
 
 ## Phase 0: Critical Research (Blockers Resolution)
 
+**GitHub Issue**: #4
 **Status**: 🔴 **BLOCKING** - Must complete before implementation
 **Effort Estimate**: S (2-4 hours)
 **Spec References**: Section 6.4 (API Contracts), Section 8.3 (Open Questions)
@@ -139,6 +150,7 @@ None (first phase)
 
 ## Phase 1: Project Foundation
 
+**GitHub Issue**: #5
 **Status**: ⚪ Not Started
 **Effort Estimate**: M (2-3 days)
 **Spec References**: Section 6.3 (Technology Choices), Section 5.5 (Hosting)
@@ -253,6 +265,7 @@ Phase 0 (research findings inform config structure)
 
 ## Phase 2: Access Control & Whitelist
 
+**GitHub Issue**: #6
 **Status**: ⚪ Not Started
 **Effort Estimate**: M (2-3 days)
 **Spec References**: Section 4.2 (US-1.1, US-1.2), Section 5.4 (Whitelist Management Flow)
@@ -389,6 +402,7 @@ Phase 1 (database, config, basic handlers)
 
 ## Phase 3: Cal.com API Client
 
+**GitHub Issue**: #7
 **Status**: ⚪ Not Started
 **Effort Estimate**: M (2-3 days)
 **Spec References**: Section 6.4 (API Contracts), Section 8.1 (Technical Risks)
@@ -575,6 +589,7 @@ Phase 1 (config, basic structure)
 
 ## Phase 4: Booking Conversation Flow
 
+**GitHub Issue**: #8
 **Status**: ⚪ Not Started
 **Effort Estimate**: L (4-6 days)
 **Spec References**: Section 4.3 (Workflow 2), Section 4.2 (US-2.1 through US-2.5)
@@ -780,6 +795,7 @@ Phase 2 (whitelist), Phase 3 (Cal.com client)
 
 ## Phase 5: Integration Testing & Polish
 
+**GitHub Issue**: #9
 **Status**: ⚪ Not Started
 **Effort Estimate**: M (2-4 days)
 **Spec References**: Section 7.2 (Testing Strategy), Section 9 (Milestones M4, M5)

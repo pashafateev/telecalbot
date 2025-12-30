@@ -1,0 +1,204 @@
+{
+  "event_types": [
+    {
+      "id": 2442700,
+      "ownerId": 1525644,
+      "lengthInMinutes": 60,
+      "lengthInMinutesOptions": [
+        30,
+        60
+      ],
+      "title": "Step work",
+      "slug": "step",
+      "description": "",
+      "locations": [
+        {
+          "type": "integration",
+          "integration": "google-meet"
+        },
+        {
+          "type": "address",
+          "address": "Text for location",
+          "public": false
+        },
+        {
+          "type": "phone",
+          "phone": "+14258024717",
+          "public": false
+        }
+      ],
+      "bookingFields": [
+        {
+          "isDefault": true,
+          "type": "name",
+          "slug": "name",
+          "required": true,
+          "disableOnPrefill": false
+        },
+        {
+          "isDefault": true,
+          "type": "email",
+          "slug": "email",
+          "required": true,
+          "disableOnPrefill": false,
+          "hidden": false
+        },
+        {
+          "isDefault": true,
+          "type": "radioInput",
+          "slug": "location",
+          "required": false,
+          "hidden": false
+        },
+        {
+          "isDefault": true,
+          "type": "textarea",
+          "slug": "notes",
+          "required": false,
+          "disableOnPrefill": false,
+          "hidden": false
+        },
+        {
+          "isDefault": true,
+          "type": "textarea",
+          "slug": "rescheduleReason",
+          "required": false,
+          "disableOnPrefill": false,
+          "hidden": false
+        }
+      ],
+      "recurrence": null,
+      "disableGuests": false,
+      "slotInterval": null,
+      "minimumBookingNotice": 1440,
+      "beforeEventBuffer": 0,
+      "afterEventBuffer": 0,
+      "metadata": {
+        "multipleDuration": [
+          30,
+          60
+        ],
+        "apps": {
+          "giphy": {
+            "enabled": false,
+            "thankYouPage": ""
+          }
+        }
+      },
+      "price": 0,
+      "currency": "usd",
+      "lockTimeZoneToggleOnBookingPage": false,
+      "forwardParamsSuccessRedirect": true,
+      "successRedirectUrl": null,
+      "isInstantEvent": false,
+      "users": [
+        {
+          "id": 1525644,
+          "name": "Pasha",
+          "username": "pashaf",
+          "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocLCGHvdSoTJWfmQnyXniiJkuIpJT_2UkxHzJSxwJ0DnrEAtnDq1=s96-c",
+          "brandColor": null,
+          "darkBrandColor": null,
+          "weekStart": "Sunday",
+          "metadata": {
+            "stripeCustomerId": "cus_SHU6WRu7PKsFLV",
+            "defaultConferencingApp": {
+              "appSlug": "google-meet"
+            }
+          }
+        }
+      ],
+      "scheduleId": 662105,
+      "bookingLimitsCount": {
+        "day": 4
+      },
+      "bookingLimitsDuration": {},
+      "onlyShowFirstAvailableSlot": false,
+      "offsetStart": 0,
+      "bookingWindow": {
+        "type": "calendarDays",
+        "value": 7,
+        "rolling": false
+      },
+      "confirmationPolicy": {
+        "disabled": true
+      },
+      "requiresBookerEmailVerification": false,
+      "hideCalendarNotes": false,
+      "seats": {
+        "disabled": true
+      },
+      "customName": "{Scheduler} step work",
+      "destinationCalendar": {
+        "integration": "google_calendar",
+        "externalId": "pashaf.sa23@gmail.com"
+      },
+      "useDestinationCalendarEmail": true,
+      "hideCalendarEventDetails": false,
+      "hideOrganizerEmail": false,
+      "hidden": true,
+      "bookingRequiresAuthentication": false,
+      "bookerActiveBookingsLimit": {
+        "maximumActiveBookings": 1,
+        "offerReschedule": true
+      }
+    }
+  ],
+  "event_type_id": 2442700,
+  "availability_sample": {
+    "slots": {
+      "2026-01-01": [
+        {
+          "time": "2026-01-01T04:00:00.000+03:00"
+        }
+      ],
+      "2026-01-02": [
+        {
+          "time": "2026-01-02T05:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-02T06:00:00.000+03:00"
+        }
+      ],
+      "2026-01-03": [
+        {
+          "time": "2026-01-03T05:00:00.000+03:00"
+        }
+      ],
+      "2026-01-04": [
+        {
+          "time": "2026-01-04T01:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-04T02:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-04T04:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-04T05:00:00.000+03:00"
+        }
+      ],
+      "2026-01-05": [
+        {
+          "time": "2026-01-05T02:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-05T03:00:00.000+03:00"
+        },
+        {
+          "time": "2026-01-05T18:00:00.000+03:00"
+        }
+      ]
+    }
+  },
+  "placeholder_email_works": true,
+  "rate_limit_headers": {
+    "x-ratelimit-limit-default": "120",
+    "x-ratelimit-remaining-default": "118",
+    "x-ratelimit-reset-default": "60"
+  },
+  "meeting_method_field": "meetingUrl",
+  "test_booking_id": 14124132,
+  "errors": []
+}
