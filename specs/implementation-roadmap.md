@@ -7,8 +7,8 @@
 
 ## GitHub Issues
 
-- [ ] [#4 Phase 0: Cal.com API Research & Validation](https://github.com/pashafateev/telecalbot/issues/4)
-- [ ] [#5 Phase 1: Project Foundation & Basic Bot Setup](https://github.com/pashafateev/telecalbot/issues/5)
+- [x] [#4 Phase 0: Cal.com API Research & Validation](https://github.com/pashafateev/telecalbot/issues/4)
+- [x] [#5 Phase 1: Project Foundation & Basic Bot Setup](https://github.com/pashafateev/telecalbot/issues/5)
 - [ ] [#6 Phase 2: Access Control & Whitelist System](https://github.com/pashafateev/telecalbot/issues/6)
 - [ ] [#7 Phase 3: Cal.com API Client with Caching & Retry Logic](https://github.com/pashafateev/telecalbot/issues/7)
 - [ ] [#8 Phase 4: Booking Conversation Flow with Telegram ConversationHandler](https://github.com/pashafateev/telecalbot/issues/8)
