@@ -1,5 +1,11 @@
 """Telegram bot handlers."""
 
+from app.handlers.admin import approve_command, pending_command, reject_command
 from app.handlers.start import start_command
 
-__all__ = ["start_command"]
+__all__ = [
+    "approve_command",
+    "pending_command",
+    "reject_command",
+    "start_command",
+]

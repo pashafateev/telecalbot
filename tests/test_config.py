@@ -37,6 +37,7 @@ def test_config_required_fields():
 
     try:
         from pydantic import ValidationError
+
         from app.config import Settings
 
         with pytest.raises(ValidationError):
