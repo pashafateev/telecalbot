@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler
 
 from app.config import settings
 from app.database import db, run_migrations
-from app.handlers import start_command
+from app.handlers import approve_command, pending_command, reject_command, start_command
 
 
 def setup_logging() -> None:
@@ -37,6 +37,9 @@ def main() -> None:
 
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("approve", approve_command))
+    application.add_handler(CommandHandler("reject", reject_command))
+    application.add_handler(CommandHandler("pending", pending_command))
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
