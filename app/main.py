@@ -7,7 +7,8 @@ from telegram.ext import Application, CommandHandler
 
 from app.config import settings
 from app.database import db, run_migrations
-from app.handlers import start_command
+from app.handlers import approve_command, pending_command, reject_command, start_command
+from app.services.whitelist import WhitelistService
 
 
 def setup_logging() -> None:
@@ -35,8 +36,14 @@ def main() -> None:
     # Create application
     application = Application.builder().token(settings.telegram_bot_token).build()
 
+    # Inject services
+    application.bot_data["whitelist_service"] = WhitelistService(db)
+
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("approve", approve_command))
+    application.add_handler(CommandHandler("reject", reject_command))
+    application.add_handler(CommandHandler("pending", pending_command))
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
