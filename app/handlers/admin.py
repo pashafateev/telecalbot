@@ -7,13 +7,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.config import settings
-from app.database import db
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
-
-# Global whitelist service instance
-whitelist_service = WhitelistService(db)
 
 
 def admin_only(func):
@@ -38,6 +34,8 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     Usage: /approve <telegram_id>
     """
+    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
+
     if not context.args:
         await update.message.reply_text("Usage: /approve <telegram_id>")
         return
@@ -87,6 +85,8 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     Usage: /reject <telegram_id>
     """
+    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
+
     if not context.args:
         await update.message.reply_text("Usage: /reject <telegram_id>")
         return
@@ -120,6 +120,8 @@ async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     Usage: /pending
     """
+    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
+
     requests = whitelist_service.get_pending_requests()
 
     if not requests:

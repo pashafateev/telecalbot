@@ -1,6 +1,6 @@
 """Tests for admin command handlers."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -30,12 +30,13 @@ def mock_update():
 
 
 @pytest.fixture
-def mock_context():
-    """Create a mock Context object."""
+def mock_context(whitelist_service):
+    """Create a mock Context object with injected services."""
     context = MagicMock()
     context.bot = AsyncMock()
     context.bot.send_message = AsyncMock()
     context.args = []
+    context.bot_data = {"whitelist_service": whitelist_service}
     return context
 
 
@@ -75,14 +76,11 @@ class TestApproveCommand:
     """Tests for /approve command."""
 
     @pytest.mark.asyncio
-    async def test_requires_telegram_id_argument(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_requires_telegram_id_argument(self, mock_update, mock_context):
         """Shows usage when no argument provided."""
         mock_context.args = []
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await approve_command(mock_update, mock_context)
+        await approve_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "usage" in mock_update.message.reply_text.call_args[0][0].lower()
@@ -99,8 +97,7 @@ class TestApproveCommand:
         )
         mock_context.args = ["12345"]
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await approve_command(mock_update, mock_context)
+        await approve_command(mock_update, mock_context)
 
         # User should be whitelisted
         assert whitelist_service.is_whitelisted(12345) is True
@@ -115,27 +112,21 @@ class TestApproveCommand:
         assert call_kwargs["chat_id"] == 12345
 
     @pytest.mark.asyncio
-    async def test_handles_nonexistent_request(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_handles_nonexistent_request(self, mock_update, mock_context):
         """Handles request that doesn't exist."""
         mock_context.args = ["99999"]
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await approve_command(mock_update, mock_context)
+        await approve_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "no pending" in mock_update.message.reply_text.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_handles_invalid_telegram_id(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_handles_invalid_telegram_id(self, mock_update, mock_context):
         """Handles invalid telegram ID argument."""
         mock_context.args = ["not_a_number"]
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await approve_command(mock_update, mock_context)
+        await approve_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "invalid" in mock_update.message.reply_text.call_args[0][0].lower()
@@ -145,14 +136,11 @@ class TestRejectCommand:
     """Tests for /reject command."""
 
     @pytest.mark.asyncio
-    async def test_requires_telegram_id_argument(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_requires_telegram_id_argument(self, mock_update, mock_context):
         """Shows usage when no argument provided."""
         mock_context.args = []
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await reject_command(mock_update, mock_context)
+        await reject_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "usage" in mock_update.message.reply_text.call_args[0][0].lower()
@@ -169,8 +157,7 @@ class TestRejectCommand:
         )
         mock_context.args = ["12345"]
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await reject_command(mock_update, mock_context)
+        await reject_command(mock_update, mock_context)
 
         # User should NOT be whitelisted
         assert whitelist_service.is_whitelisted(12345) is False
@@ -184,14 +171,11 @@ class TestRejectCommand:
         assert "rejected" in mock_update.message.reply_text.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_handles_nonexistent_request(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_handles_nonexistent_request(self, mock_update, mock_context):
         """Handles request that doesn't exist."""
         mock_context.args = ["99999"]
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await reject_command(mock_update, mock_context)
+        await reject_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "no pending" in mock_update.message.reply_text.call_args[0][0].lower()
@@ -201,12 +185,9 @@ class TestPendingCommand:
     """Tests for /pending command."""
 
     @pytest.mark.asyncio
-    async def test_shows_no_pending_requests(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_shows_no_pending_requests(self, mock_update, mock_context):
         """Shows message when no pending requests."""
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await pending_command(mock_update, mock_context)
+        await pending_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         assert "no pending" in mock_update.message.reply_text.call_args[0][0].lower()
@@ -227,8 +208,7 @@ class TestPendingCommand:
             username=None,
         )
 
-        with patch("app.handlers.admin.whitelist_service", whitelist_service):
-            await pending_command(mock_update, mock_context)
+        await pending_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         response = mock_update.message.reply_text.call_args[0][0]

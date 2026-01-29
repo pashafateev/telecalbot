@@ -48,10 +48,10 @@ class Database:
             return cursor.fetchone()
 
     def execute_write(self, query: str, params: tuple = ()) -> int:
-        """Execute a write query and return the lastrowid."""
+        """Execute a write query and return the number of affected rows."""
         with self.get_connection() as conn:
             cursor = conn.execute(query, params)
-            return cursor.lastrowid
+            return cursor.rowcount
 
 
 # Global database instance

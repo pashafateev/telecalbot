@@ -32,11 +32,12 @@ def mock_update():
 
 
 @pytest.fixture
-def mock_context():
-    """Create a mock Context object."""
+def mock_context(whitelist_service):
+    """Create a mock Context object with injected services."""
     context = MagicMock()
     context.bot = AsyncMock()
     context.bot.send_message = AsyncMock()
+    context.bot_data = {"whitelist_service": whitelist_service}
     return context
 
 
@@ -56,8 +57,7 @@ class TestStartCommandAccessControl:
             approved_by=789,
         )
 
-        with patch("app.handlers.start.whitelist_service", whitelist_service):
-            await start_command(mock_update, mock_context)
+        await start_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         response = mock_update.message.reply_text.call_args[0][0]
@@ -65,11 +65,10 @@ class TestStartCommandAccessControl:
 
     @pytest.mark.asyncio
     async def test_non_whitelisted_user_sees_access_denied(
-        self, mock_update, mock_context, whitelist_service
+        self, mock_update, mock_context
     ):
         """Non-whitelisted user sees access denied with chat ID."""
-        with patch("app.handlers.start.whitelist_service", whitelist_service):
-            await start_command(mock_update, mock_context)
+        await start_command(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         response = mock_update.message.reply_text.call_args[0][0]
@@ -84,8 +83,7 @@ class TestStartCommandAccessControl:
         self, mock_update, mock_context, whitelist_service
     ):
         """New user's access request is created."""
-        with patch("app.handlers.start.whitelist_service", whitelist_service):
-            await start_command(mock_update, mock_context)
+        await start_command(mock_update, mock_context)
 
         # Check that access request was created
         request = whitelist_service.get_access_request(12345)
@@ -95,14 +93,9 @@ class TestStartCommandAccessControl:
         assert request.status == "pending"
 
     @pytest.mark.asyncio
-    async def test_notifies_admin_for_new_request(
-        self, mock_update, mock_context, whitelist_service
-    ):
+    async def test_notifies_admin_for_new_request(self, mock_update, mock_context):
         """Admin is notified when new access request is created."""
-        with (
-            patch("app.handlers.start.whitelist_service", whitelist_service),
-            patch("app.handlers.start.settings") as mock_settings,
-        ):
+        with patch("app.handlers.start.settings") as mock_settings:
             mock_settings.admin_telegram_id = 999
 
             await start_command(mock_update, mock_context)
@@ -129,10 +122,7 @@ class TestStartCommandAccessControl:
             username="testuser",
         )
 
-        with (
-            patch("app.handlers.start.whitelist_service", whitelist_service),
-            patch("app.handlers.start.settings") as mock_settings,
-        ):
+        with patch("app.handlers.start.settings") as mock_settings:
             mock_settings.admin_telegram_id = 999
 
             await start_command(mock_update, mock_context)
@@ -147,8 +137,7 @@ class TestStartCommandAccessControl:
         """User without Telegram username can still request access."""
         mock_update.effective_user.username = None
 
-        with patch("app.handlers.start.whitelist_service", whitelist_service):
-            await start_command(mock_update, mock_context)
+        await start_command(mock_update, mock_context)
 
         # Request should be created
         request = whitelist_service.get_access_request(12345)
@@ -160,10 +149,7 @@ class TestStartCommandAccessControl:
         self, mock_update, mock_context, whitelist_service
     ):
         """Admin user is automatically whitelisted on /start."""
-        with (
-            patch("app.handlers.start.whitelist_service", whitelist_service),
-            patch("app.handlers.start.settings") as mock_settings,
-        ):
+        with patch("app.handlers.start.settings") as mock_settings:
             mock_settings.admin_telegram_id = 12345  # Same as user ID
 
             await start_command(mock_update, mock_context)

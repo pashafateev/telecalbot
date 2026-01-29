@@ -6,17 +6,15 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.config import settings
-from app.database import db
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
 
-# Global whitelist service instance
-whitelist_service = WhitelistService(db)
-
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command with access control."""
+    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
+
     user = update.effective_user
     chat_id = user.id
 

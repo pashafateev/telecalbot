@@ -58,7 +58,7 @@ class WhitelistService:
         if row is None:
             return None
         return WhitelistEntry(
-            telegram_id=row["telegram_id"],
+        telegram_id=row["telegram_id"],
             display_name=row["display_name"],
             username=row["username"],
             approved_at=datetime.fromisoformat(row["approved_at"]),
@@ -75,15 +75,9 @@ class WhitelistService:
         Create an access request.
 
         Returns True if a new request was created, False if one already exists.
-        Uses INSERT OR IGNORE to handle race conditions.
         """
-        # Check if request already exists
-        existing = self.get_access_request(telegram_id)
-        if existing is not None:
-            return False
-
         now = datetime.now(timezone.utc).isoformat()
-        self.db.execute_write(
+        rowcount = self.db.execute_write(
             """
             INSERT OR IGNORE INTO access_requests
                 (telegram_id, display_name, username, requested_at, status)
@@ -91,7 +85,7 @@ class WhitelistService:
             """,
             (telegram_id, display_name, username, now),
         )
-        return True
+        return rowcount > 0
 
     def get_access_request(self, telegram_id: int) -> AccessRequest | None:
         """Get an access request by telegram_id."""
