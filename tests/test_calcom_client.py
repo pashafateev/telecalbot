@@ -2,9 +2,8 @@
 
 import asyncio
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
 from app.services.calcom_client import (
@@ -21,31 +20,11 @@ from app.services.calcom_client import (
 class TestCalComAPIError:
     """Test CalComAPIError user-friendly messages."""
 
-    def test_conflict_error_message(self):
-        """409 Conflict returns slot unavailable message."""
-        error = CalComAPIError(status_code=409, message="Slot taken")
-        assert "no longer available" in error.user_message().lower()
-
-    def test_bad_request_error_message(self):
-        """400/422 errors return generic problem message."""
-        for status in (400, 422):
-            error = CalComAPIError(status_code=status, message="Invalid data")
-            assert "problem" in error.user_message().lower()
-
-    def test_rate_limit_error_message(self):
-        """429 Too Many Requests returns wait message."""
-        error = CalComAPIError(status_code=429, message="Rate limited")
-        assert "wait" in error.user_message().lower()
-
-    def test_server_error_message(self):
-        """5xx errors return temporarily unavailable message."""
-        error = CalComAPIError(status_code=500, message="Server error")
-        assert "temporarily unavailable" in error.user_message().lower()
-
-    def test_network_error_message(self):
-        """Status code 0 (network error) returns unavailable message."""
-        error = CalComAPIError(status_code=0, message="Connection failed")
-        assert "temporarily unavailable" in error.user_message().lower()
+    def test_user_message_returns_generic_message(self):
+        """All errors return the same generic message."""
+        for status in (400, 422, 429, 500, 0):
+            error = CalComAPIError(status_code=status, message="Some error")
+            assert error.user_message() == "Something went wrong. Please try again."
 
 
 class TestTimeSlotModel:
@@ -153,7 +132,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             mock_request.return_value = mock_response
 
@@ -181,7 +160,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             mock_request.return_value = mock_response
 
@@ -214,7 +193,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             mock_request.return_value = mock_response
 
@@ -247,7 +226,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             mock_request.return_value = mock_response
 
@@ -287,7 +266,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             mock_request.return_value = mock_response
 
@@ -327,7 +306,7 @@ class TestCalComClient:
         }
 
         with patch.object(
-            client, "_request_with_retry", new_callable=AsyncMock
+            client, "_request", new_callable=AsyncMock
         ) as mock_request:
             # First call: get availability (populates cache)
             mock_request.return_value = avail_response
@@ -363,120 +342,6 @@ class TestCalComClient:
                 timezone="Europe/Moscow",
             )
             assert mock_request.call_count == 3  # Cache was cleared
-
-
-class TestCalComClientRetryLogic:
-    """Test retry logic for transient failures."""
-
-    @pytest.fixture
-    def client(self):
-        """Create a CalComClient instance for testing."""
-        return CalComClient(
-            api_key="test_key",
-            api_version="2024-06-14",
-            cache_ttl=300,
-        )
-
-    @pytest.mark.asyncio
-    async def test_retry_on_rate_limit(self, client):
-        """Retries on 429 with exponential backoff."""
-        # Mock the httpx client's request method
-        mock_response_429 = MagicMock()
-        mock_response_429.status_code = 429
-        mock_response_429.headers = {"Retry-After": "1"}
-
-        mock_response_200 = MagicMock()
-        mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {"status": "success", "data": {}}
-        mock_response_200.raise_for_status = MagicMock()
-
-        with patch.object(client._client, "request", new_callable=AsyncMock) as mock:
-            # First call returns 429, second returns 200
-            mock.side_effect = [mock_response_429, mock_response_200]
-
-            # Use a short base delay for testing
-            result = await client._request_with_retry(
-                "GET",
-                "/test",
-                max_retries=3,
-                base_delay=0.01,
-            )
-
-            assert mock.call_count == 2
-            assert result == {"status": "success", "data": {}}
-
-    @pytest.mark.asyncio
-    async def test_no_retry_on_client_error(self, client):
-        """Does not retry on 400/401/404/422 errors."""
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.text = "Bad Request"
-
-        http_error = httpx.HTTPStatusError(
-            "Bad Request",
-            request=MagicMock(),
-            response=mock_response,
-        )
-        mock_response.raise_for_status.side_effect = http_error
-
-        with patch.object(client._client, "request", new_callable=AsyncMock) as mock:
-            mock.return_value = mock_response
-
-            with pytest.raises(CalComAPIError) as exc_info:
-                await client._request_with_retry(
-                    "GET",
-                    "/test",
-                    max_retries=3,
-                    base_delay=0.01,
-                )
-
-            # Only one call - no retries for client errors
-            assert mock.call_count == 1
-            assert exc_info.value.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_retry_on_network_error(self, client):
-        """Retries on network errors (RequestError)."""
-        request_error = httpx.RequestError("Connection failed")
-
-        mock_response_200 = MagicMock()
-        mock_response_200.status_code = 200
-        mock_response_200.json.return_value = {"status": "success", "data": {}}
-        mock_response_200.raise_for_status = MagicMock()
-
-        with patch.object(client._client, "request", new_callable=AsyncMock) as mock:
-            # First two calls fail, third succeeds
-            mock.side_effect = [request_error, request_error, mock_response_200]
-
-            result = await client._request_with_retry(
-                "GET",
-                "/test",
-                max_retries=3,
-                base_delay=0.01,
-            )
-
-            assert mock.call_count == 3
-            assert result == {"status": "success", "data": {}}
-
-    @pytest.mark.asyncio
-    async def test_max_retries_exceeded(self, client):
-        """Raises CalComAPIError after max retries exceeded."""
-        request_error = httpx.RequestError("Connection failed")
-
-        with patch.object(client._client, "request", new_callable=AsyncMock) as mock:
-            mock.side_effect = request_error
-
-            with pytest.raises(CalComAPIError) as exc_info:
-                await client._request_with_retry(
-                    "GET",
-                    "/test",
-                    max_retries=3,
-                    base_delay=0.01,
-                )
-
-            assert mock.call_count == 3
-            assert exc_info.value.status_code == 0
-            assert "retries" in exc_info.value.message.lower()
 
 
 class TestCalComClientClose:

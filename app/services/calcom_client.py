@@ -1,6 +1,5 @@
-"""Cal.com API client with caching and retry logic."""
+"""Cal.com API client with caching."""
 
-import asyncio
 import logging
 import time
 from datetime import date
@@ -22,14 +21,7 @@ class CalComAPIError(Exception):
 
     def user_message(self) -> str:
         """Return user-friendly error message."""
-        if self.status_code == 409:
-            return "This time is no longer available. Please select another."
-        elif self.status_code in (400, 422):
-            return "There was a problem with your booking. Please try again."
-        elif self.status_code == 429:
-            return "Too many requests. Please wait a moment and try again."
-        else:
-            return "Cal.com is temporarily unavailable. Please try again later."
+        return "Something went wrong. Please try again."
 
 
 class TimeSlot(BaseModel):
@@ -74,7 +66,7 @@ class BookingResponse(BaseModel):
 
 
 class CalComClient:
-    """Async Cal.com API client with caching and retry logic."""
+    """Async Cal.com API client with caching."""
 
     BASE_URL = "https://api.cal.com/v2"
 
@@ -101,7 +93,7 @@ class CalComClient:
             timeout=30.0,
         )
         self.cache_ttl = cache_ttl
-        self._availability_cache: dict[str, tuple[float, AvailabilityResponse]] = {}
+        self._availability_cache: dict[tuple, tuple[float, AvailabilityResponse]] = {}
 
     async def __aenter__(self) -> "CalComClient":
         """Async context manager entry."""
@@ -136,7 +128,7 @@ class CalComClient:
         Raises:
             CalComAPIError: If API request fails.
         """
-        cache_key = f"{event_type_id}:{start_date}:{end_date}:{timezone}"
+        cache_key = (event_type_id, start_date, end_date, timezone)
 
         # Check cache
         if cache_key in self._availability_cache:
@@ -148,7 +140,7 @@ class CalComClient:
         logger.debug("Cache miss for availability: %s", cache_key)
 
         # Fetch from API
-        response = await self._request_with_retry(
+        response = await self._request(
             "GET",
             "/slots/available",
             params={
@@ -175,7 +167,7 @@ class CalComClient:
         Raises:
             CalComAPIError: If booking creation fails.
         """
-        response = await self._request_with_retry(
+        response = await self._request(
             "POST",
             "/bookings",
             json=request.model_dump(),
@@ -187,92 +179,39 @@ class CalComClient:
 
         return BookingResponse.model_validate(response["data"])
 
-    async def _request_with_retry(
+    async def _request(
         self,
         method: str,
         path: str,
-        max_retries: int = 3,
-        base_delay: float = 1.0,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Make HTTP request with exponential backoff retry logic.
+        """Make HTTP request to Cal.com API.
 
         Args:
             method: HTTP method (GET, POST, etc.).
             path: API endpoint path.
-            max_retries: Maximum number of retry attempts.
-            base_delay: Base delay in seconds for exponential backoff.
             **kwargs: Additional arguments for httpx request.
 
         Returns:
             Parsed JSON response.
 
         Raises:
-            CalComAPIError: If request fails after all retries.
+            CalComAPIError: If request fails.
         """
-        last_error: Exception | None = None
-
-        for attempt in range(max_retries):
-            try:
-                response = await self._client.request(method, path, **kwargs)
-
-                if response.status_code == 429:
-                    # Rate limited - exponential backoff
-                    wait = base_delay * (2**attempt)
-                    logger.warning(
-                        "Rate limited (attempt %d/%d), waiting %.1fs",
-                        attempt + 1,
-                        max_retries,
-                        wait,
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-
-                response.raise_for_status()
-                return response.json()
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-
-                if status_code in (400, 401, 404, 422):
-                    # Client error - don't retry
-                    logger.error(
-                        "Cal.com API client error %d: %s",
-                        status_code,
-                        e.response.text,
-                    )
-                    raise CalComAPIError(
-                        status_code=status_code,
-                        message=e.response.text,
-                    )
-
-                # Server error - retry with backoff
-                wait = base_delay * (2**attempt)
-                logger.warning(
-                    "Cal.com API server error %d (attempt %d/%d), waiting %.1fs",
-                    status_code,
-                    attempt + 1,
-                    max_retries,
-                    wait,
-                )
-                await asyncio.sleep(wait)
-
-            except httpx.RequestError as e:
-                last_error = e
-                # Network error - retry with backoff
-                wait = base_delay * (2**attempt)
-                logger.warning(
-                    "Cal.com API network error (attempt %d/%d): %s, waiting %.1fs",
-                    attempt + 1,
-                    max_retries,
-                    str(e),
-                    wait,
-                )
-                await asyncio.sleep(wait)
-
-        # All retries exhausted
-        raise CalComAPIError(
-            status_code=0,
-            message=f"Failed after {max_retries} retries: {last_error}",
-        )
+        try:
+            response = await self._client.request(method, path, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Cal.com API error %d: %s",
+                e.response.status_code,
+                e.response.text,
+            )
+            raise CalComAPIError(
+                status_code=e.response.status_code,
+                message=e.response.text,
+            )
+        except httpx.RequestError as e:
+            logger.error("Cal.com API network error: %s", str(e))
+            raise CalComAPIError(status_code=0, message=str(e))
