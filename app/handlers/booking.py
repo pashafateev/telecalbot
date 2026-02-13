@@ -19,6 +19,7 @@ from app.constants import RUSSIAN_TIMEZONES
 from app.services.calcom_client import (
     Attendee,
     BookingRequest,
+    BookingResponse,
     CalComAPIError,
     CalComClient,
 )
@@ -228,6 +229,13 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store email and show confirmation."""
     email = update.message.text.strip()
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        await update.message.reply_text(
+            "That doesn't look like a valid email. Please try again:"
+        )
+        return BookingState.ENTERING_EMAIL
+
     context.user_data["email"] = email
     await _show_confirmation_message(update.message, context)
     return BookingState.CONFIRMING
@@ -299,7 +307,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         start_utc = slot_to_utc(data["selected_time"])
 
-        booking = await calcom_client.create_booking(  # noqa: F841
+        booking = await calcom_client.create_booking(
             BookingRequest(
                 eventTypeId=settings.calcom_event_type_id,
                 start=start_utc,
@@ -320,6 +328,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             data["selected_time"],
             data["timezone"],
         )
+        duration = _format_duration(booking)
         email_note = (
             f"\nA confirmation email has been sent to {email}."
             if data.get("email")
@@ -329,7 +338,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             f"All set! Your appointment is confirmed.\n\n"
             f"Time: {formatted_time}\n"
-            f"Duration: 1 hour\n\n"
+            f"Duration: {duration}\n\n"
             f"We'll connect via Telegram at that time."
             f"{email_note}"
         )
@@ -464,10 +473,21 @@ def slot_to_utc(time_iso: str) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _format_duration(booking: BookingResponse) -> str:
+    """Derive human-readable duration from booking start/end times."""
+    start = datetime.fromisoformat(booking.startTime)
+    end = datetime.fromisoformat(booking.endTime)
+    minutes = int((end - start).total_seconds() // 60)
+    if minutes >= 60 and minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{minutes} minutes"
+
+
 def _format_datetime_display(date_str: str, time_iso: str, tz_id: str) -> str:
     """Format date and time for user-facing display."""
     dt = datetime.fromisoformat(time_iso)
-    return dt.strftime("%A, %B %-d at %-I:%M %p")
+    return f"{dt.strftime('%A, %B %-d at %-I:%M %p')} ({tz_id})"
 
 
 # ---------------------------------------------------------------------------

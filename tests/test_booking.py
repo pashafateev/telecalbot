@@ -1,6 +1,5 @@
 """Tests for the booking conversation handler."""
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,16 +7,20 @@ import pytest
 from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
     BookingState,
+    _format_duration,
+    book_command,
     build_availability_keyboard,
     build_timezone_keyboard,
     cancel,
+    change_timezone,
     confirm_booking,
     email_decision,
     enter_email,
     enter_name,
-    book_command,
     format_date_header,
     format_time,
+    load_more_dates,
+    noop,
     select_slot,
     select_timezone,
     slot_to_utc,
@@ -28,7 +31,6 @@ from app.services.calcom_client import (
     CalComAPIError,
     TimeSlot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -455,6 +457,51 @@ class TestEnterEmail:
 
         mock_update.message.reply_text.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_email_no_at(self, mock_update, mock_context):
+        mock_update.message.text = "notanemail"
+        mock_context.user_data = {
+            "name": "Alice",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+
+        result = await enter_email(mock_update, mock_context)
+
+        assert result == BookingState.ENTERING_EMAIL
+        assert "email" not in mock_context.user_data
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_email_no_dot_in_domain(self, mock_update, mock_context):
+        mock_update.message.text = "user@localhost"
+        mock_context.user_data = {
+            "name": "Alice",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+
+        result = await enter_email(mock_update, mock_context)
+
+        assert result == BookingState.ENTERING_EMAIL
+
+    @pytest.mark.asyncio
+    async def test_invalid_email_shows_error_message(self, mock_update, mock_context):
+        mock_update.message.text = "bad"
+        mock_context.user_data = {
+            "name": "Alice",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+
+        await enter_email(mock_update, mock_context)
+
+        mock_update.message.reply_text.assert_called_once()
+        msg = mock_update.message.reply_text.call_args[0][0]
+        assert "valid" in msg.lower() or "try again" in msg.lower()
+
 
 class TestConfirmBooking:
     @pytest.fixture
@@ -609,6 +656,53 @@ class TestConfirmBooking:
 
         assert result == BookingState.VIEWING_AVAILABILITY
 
+    @pytest.mark.asyncio
+    async def test_shows_dynamic_duration(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+        # 30-minute booking
+        mock_calcom_client.create_booking.return_value = BookingResponse(
+            id=1,
+            uid="abc123",
+            title="Meeting",
+            startTime="2026-01-06T07:00:00Z",
+            endTime="2026-01-06T07:30:00Z",
+            status="accepted",
+        )
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.calcom_event_type_id = 42
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "30 minutes" in final_message
+
+    @pytest.mark.asyncio
+    async def test_shows_timezone_in_confirmation(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+        mock_calcom_client.create_booking.return_value = booking_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.calcom_event_type_id = 42
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "Europe/Moscow" in final_message
+
 
 class TestCancel:
     @pytest.mark.asyncio
@@ -644,3 +738,89 @@ class TestCancel:
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
         msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "cancel" in msg.lower()
+
+
+class TestLoadMoreDates:
+    @pytest.mark.asyncio
+    async def test_stores_offset_and_calls_show_availability(
+        self, mock_update_with_query, mock_context, mock_calcom_client, availability_response
+    ):
+        mock_update_with_query.callback_query.data = "dates:5"
+        mock_context.user_data = {"timezone": "Europe/Moscow"}
+        mock_calcom_client.get_availability.return_value = availability_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.calcom_event_type_id = 42
+            result = await load_more_dates(mock_update_with_query, mock_context)
+
+        assert mock_context.user_data["offset_days"] == 5
+        assert result == BookingState.VIEWING_AVAILABILITY
+        mock_calcom_client.get_availability.assert_called_once()
+
+
+class TestChangeTimezone:
+    @pytest.mark.asyncio
+    async def test_returns_selecting_timezone(self, mock_update_with_query, mock_context):
+        result = await change_timezone(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+
+    @pytest.mark.asyncio
+    async def test_shows_timezone_keyboard(self, mock_update_with_query, mock_context):
+        await change_timezone(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.edit_message_text.assert_called_once()
+        call_kwargs = mock_update_with_query.callback_query.edit_message_text.call_args[1]
+        assert "reply_markup" in call_kwargs
+
+
+class TestNoop:
+    @pytest.mark.asyncio
+    async def test_returns_viewing_availability(self, mock_update_with_query, mock_context):
+        result = await noop(mock_update_with_query, mock_context)
+
+        assert result == BookingState.VIEWING_AVAILABILITY
+
+    @pytest.mark.asyncio
+    async def test_answers_query(self, mock_update_with_query, mock_context):
+        await noop(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.answer.assert_called_once()
+
+
+class TestFormatDuration:
+    def test_one_hour(self):
+        booking = BookingResponse(
+            id=1, uid="x", title="T",
+            startTime="2026-01-06T07:00:00Z",
+            endTime="2026-01-06T08:00:00Z",
+            status="accepted",
+        )
+        assert _format_duration(booking) == "1 hour"
+
+    def test_two_hours(self):
+        booking = BookingResponse(
+            id=1, uid="x", title="T",
+            startTime="2026-01-06T07:00:00Z",
+            endTime="2026-01-06T09:00:00Z",
+            status="accepted",
+        )
+        assert _format_duration(booking) == "2 hours"
+
+    def test_30_minutes(self):
+        booking = BookingResponse(
+            id=1, uid="x", title="T",
+            startTime="2026-01-06T07:00:00Z",
+            endTime="2026-01-06T07:30:00Z",
+            status="accepted",
+        )
+        assert _format_duration(booking) == "30 minutes"
+
+    def test_45_minutes(self):
+        booking = BookingResponse(
+            id=1, uid="x", title="T",
+            startTime="2026-01-06T07:00:00Z",
+            endTime="2026-01-06T07:45:00Z",
+            status="accepted",
+        )
+        assert _format_duration(booking) == "45 minutes"
