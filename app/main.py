@@ -7,7 +7,14 @@ from telegram.ext import Application, CommandHandler
 
 from app.config import settings
 from app.database import db, run_migrations
-from app.handlers import approve_command, pending_command, reject_command, start_command
+from app.handlers import (
+    approve_command,
+    create_booking_handler,
+    pending_command,
+    reject_command,
+    start_command,
+)
+from app.services.calcom_client import CalComClient
 from app.services.whitelist import WhitelistService
 
 
@@ -38,12 +45,17 @@ def main() -> None:
 
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
+    application.bot_data["calcom_client"] = CalComClient(
+        api_key=settings.calcom_api_key,
+        api_version=settings.cal_api_version,
+    )
 
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
     application.add_handler(CommandHandler("pending", pending_command))
+    application.add_handler(create_booking_handler())
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
