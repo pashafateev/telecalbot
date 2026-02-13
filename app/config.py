@@ -25,7 +25,6 @@ class Settings(BaseSettings):
 
     # Application Settings
     log_level: str = "INFO"
-    availability_cache_ttl: int = 300
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

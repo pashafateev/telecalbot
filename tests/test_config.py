@@ -27,7 +27,6 @@ def test_config_defaults():
     assert settings.calcom_event_slug == "step"
     assert settings.database_path == "telecalbot.db"
     assert settings.log_level == "INFO"
-    assert settings.availability_cache_ttl == 300
 
 
 def test_config_required_fields():
