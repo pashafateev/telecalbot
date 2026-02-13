@@ -10,8 +10,8 @@
 ## Development Practices
 
 - Follow TDD: write tests first, then implement
-- Run full test suite before committing: `.venv/bin/python -m pytest tests/ -v`
-- Use ruff for linting: `.venv/bin/ruff check`
+- Run full test suite before committing: `uv run pytest tests/ -v`
+- Use ruff for linting: `uv run ruff check`
 - Commit messages follow conventional commits (feat:, fix:, docs:, etc.)
 
 ## Project Structure
