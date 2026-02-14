@@ -61,7 +61,7 @@ class TestStartCommandAccessControl:
 
         mock_update.message.reply_text.assert_called_once()
         response = mock_update.message.reply_text.call_args[0][0]
-        assert "welcome" in response.lower() or "book" in response.lower()
+        assert "добро пожаловать" in response.lower() or "записаться" in response.lower()
 
     @pytest.mark.asyncio
     async def test_non_whitelisted_user_sees_access_denied(
@@ -74,7 +74,7 @@ class TestStartCommandAccessControl:
         response = mock_update.message.reply_text.call_args[0][0]
 
         # Should mention access denied / approved users only
-        assert "approved" in response.lower() or "access" in response.lower()
+        assert "одобренных" in response.lower() or "доступ" in response.lower()
         # Should include chat ID
         assert "12345" in response
 
@@ -159,4 +159,4 @@ class TestStartCommandAccessControl:
 
         # Should see welcome, not access denied
         response = mock_update.message.reply_text.call_args[0][0]
-        assert "approved" not in response.lower() or "welcome" in response.lower()
+        assert "одобренных" not in response.lower() or "добро пожаловать" in response.lower()

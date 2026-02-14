@@ -10,6 +10,7 @@ from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
     create_booking_handler,
+    help_command,
     pending_command,
     reject_command,
     start_command,
@@ -55,6 +56,7 @@ def main() -> None:
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
     application.add_handler(CommandHandler("pending", pending_command))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(create_booking_handler())
 
     logger.info("Bot started. Press Ctrl+C to stop.")

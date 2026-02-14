@@ -33,7 +33,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if whitelist_service.is_whitelisted(chat_id):
         # Whitelisted user - show main menu
         await update.message.reply_text(
-            f"Welcome, {user.first_name}! I can help you book appointments."
+            f"Добро пожаловать, {user.first_name}! Я помогу вам записаться на встречу."
         )
     else:
         # Not whitelisted - create access request and notify admin
@@ -48,9 +48,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await _notify_admin_of_request(context, user)
 
         await update.message.reply_text(
-            f"This bot is for approved users only.\n\n"
-            f"Your Chat ID: `{chat_id}`\n\n"
-            f"An access request has been sent to the admin.",
+            f"Этот бот доступен только для одобренных пользователей.\n\n"
+            f"Ваш Chat ID: `{chat_id}`\n\n"
+            f"Запрос на доступ отправлен администратору.",
             parse_mode="Markdown",
         )
 

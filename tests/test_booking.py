@@ -166,7 +166,7 @@ class TestBuildTimezoneKeyboard:
         keyboard = build_timezone_keyboard()
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         labels = [btn.text for btn in all_buttons]
-        assert "Cancel" in labels
+        assert "Отмена" in labels
 
     def test_callback_data_uses_tz_prefix(self):
         keyboard = build_timezone_keyboard()
@@ -196,13 +196,13 @@ class TestBuildAvailabilityKeyboard:
         keyboard = build_availability_keyboard(availability_response.slots)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         labels = [btn.text for btn in all_buttons]
-        assert any("More" in lbl for lbl in labels)
+        assert any("→" in lbl for lbl in labels)
 
     def test_has_cancel_button(self, availability_response):
         keyboard = build_availability_keyboard(availability_response.slots)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         labels = [btn.text for btn in all_buttons]
-        assert "Cancel" in labels
+        assert "Отмена" in labels
 
     def test_max_6_slots_per_day(self):
         many_slots = AvailabilityResponse(
@@ -305,7 +305,7 @@ class TestSelectTimezone:
         assert result == BookingState.VIEWING_AVAILABILITY
         # Error message shown
         last_call = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "wrong" in last_call.lower() or "sorry" in last_call.lower()
+        assert "извините" in last_call.lower() or "не удалось" in last_call.lower()
 
 
 class TestSelectSlot:
@@ -337,7 +337,7 @@ class TestSelectSlot:
 
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
         prompt = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "name" in prompt.lower()
+        assert "имя" in prompt.lower()
 
 
 class TestEnterName:
@@ -500,7 +500,7 @@ class TestEnterEmail:
 
         mock_update.message.reply_text.assert_called_once()
         msg = mock_update.message.reply_text.call_args[0][0]
-        assert "valid" in msg.lower() or "try again" in msg.lower()
+        assert "некорректный" in msg.lower() or "ещё раз" in msg.lower()
 
 
 class TestConfirmBooking:
@@ -589,7 +589,7 @@ class TestConfirmBooking:
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "confirmed" in final_message.lower() or "set" in final_message.lower()
+        assert "подтверждена" in final_message.lower() or "готово" in final_message.lower()
 
     @pytest.mark.asyncio
     async def test_uses_placeholder_email_when_none(
@@ -636,7 +636,7 @@ class TestConfirmBooking:
 
         assert result == BookingState.VIEWING_AVAILABILITY
         error_msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "available" in error_msg.lower() or "another" in error_msg.lower()
+        assert "занято" in error_msg.lower() or "другое" in error_msg.lower()
 
     @pytest.mark.asyncio
     async def test_handles_generic_api_error(
@@ -681,7 +681,7 @@ class TestConfirmBooking:
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "30 minutes" in final_message
+        assert "30 мин." in final_message
 
     @pytest.mark.asyncio
     async def test_shows_timezone_in_confirmation(
@@ -737,7 +737,7 @@ class TestCancel:
 
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
         msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
-        assert "cancel" in msg.lower()
+        assert "отменена" in msg.lower()
 
 
 class TestLoadMoreDates:
@@ -796,7 +796,7 @@ class TestFormatDuration:
             end="2026-01-06T08:00:00Z",
             status="accepted",
         )
-        assert _format_duration(booking) == "1 hour"
+        assert _format_duration(booking) == "1 ч."
 
     def test_two_hours(self):
         booking = BookingResponse(
@@ -805,7 +805,7 @@ class TestFormatDuration:
             end="2026-01-06T09:00:00Z",
             status="accepted",
         )
-        assert _format_duration(booking) == "2 hours"
+        assert _format_duration(booking) == "2 ч."
 
     def test_30_minutes(self):
         booking = BookingResponse(
@@ -814,7 +814,7 @@ class TestFormatDuration:
             end="2026-01-06T07:30:00Z",
             status="accepted",
         )
-        assert _format_duration(booking) == "30 minutes"
+        assert _format_duration(booking) == "30 мин."
 
     def test_45_minutes(self):
         booking = BookingResponse(
@@ -823,4 +823,4 @@ class TestFormatDuration:
             end="2026-01-06T07:45:00Z",
             status="accepted",
         )
-        assert _format_duration(booking) == "45 minutes"
+        assert _format_duration(booking) == "45 мин."
