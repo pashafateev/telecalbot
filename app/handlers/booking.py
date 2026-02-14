@@ -475,8 +475,8 @@ def slot_to_utc(time_iso: str) -> str:
 
 def _format_duration(booking: BookingResponse) -> str:
     """Derive human-readable duration from booking start/end times."""
-    start = datetime.fromisoformat(booking.startTime)
-    end = datetime.fromisoformat(booking.endTime)
+    start = datetime.fromisoformat(booking.start)
+    end = datetime.fromisoformat(booking.end)
     minutes = int((end - start).total_seconds() // 60)
     if minutes >= 60 and minutes % 60 == 0:
         hours = minutes // 60

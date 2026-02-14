@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Cal.com API Configuration (Required)
     calcom_api_key: str
-    cal_api_version: str = "2024-06-14"
+    cal_api_version: str = "2024-08-13"
 
     # Admin Configuration (Required)
     admin_telegram_id: int

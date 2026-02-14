@@ -97,8 +97,8 @@ class TestBookingModels:
             "id": 123,
             "uid": "abc-123-def",
             "title": "Test Booking",
-            "startTime": "2026-01-01T10:00:00.000Z",
-            "endTime": "2026-01-01T11:00:00.000Z",
+            "start": "2026-01-01T10:00:00.000Z",
+            "end": "2026-01-01T11:00:00.000Z",
             "status": "accepted",
         }
         response = BookingResponse.model_validate(data)
@@ -259,8 +259,8 @@ class TestCalComClient:
                 "id": 123,
                 "uid": "abc-123",
                 "title": "Step work",
-                "startTime": "2026-01-01T10:00:00.000Z",
-                "endTime": "2026-01-01T11:00:00.000Z",
+                "start": "2026-01-01T10:00:00.000Z",
+                "end": "2026-01-01T11:00:00.000Z",
                 "status": "accepted",
             },
         }
@@ -299,8 +299,8 @@ class TestCalComClient:
                 "id": 123,
                 "uid": "abc-123",
                 "title": "Step work",
-                "startTime": "2026-01-01T10:00:00.000Z",
-                "endTime": "2026-01-01T11:00:00.000Z",
+                "start": "2026-01-01T10:00:00.000Z",
+                "end": "2026-01-01T11:00:00.000Z",
                 "status": "accepted",
             },
         }
