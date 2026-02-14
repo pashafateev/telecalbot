@@ -520,8 +520,8 @@ class TestConfirmBooking:
             id=1,
             uid="abc123",
             title="Meeting with Alice",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T08:00:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T08:00:00Z",
             status="accepted",
         )
 
@@ -671,8 +671,8 @@ class TestConfirmBooking:
             id=1,
             uid="abc123",
             title="Meeting",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T07:30:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T07:30:00Z",
             status="accepted",
         )
 
@@ -792,8 +792,8 @@ class TestFormatDuration:
     def test_one_hour(self):
         booking = BookingResponse(
             id=1, uid="x", title="T",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T08:00:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T08:00:00Z",
             status="accepted",
         )
         assert _format_duration(booking) == "1 hour"
@@ -801,8 +801,8 @@ class TestFormatDuration:
     def test_two_hours(self):
         booking = BookingResponse(
             id=1, uid="x", title="T",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T09:00:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T09:00:00Z",
             status="accepted",
         )
         assert _format_duration(booking) == "2 hours"
@@ -810,8 +810,8 @@ class TestFormatDuration:
     def test_30_minutes(self):
         booking = BookingResponse(
             id=1, uid="x", title="T",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T07:30:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T07:30:00Z",
             status="accepted",
         )
         assert _format_duration(booking) == "30 minutes"
@@ -819,8 +819,8 @@ class TestFormatDuration:
     def test_45_minutes(self):
         booking = BookingResponse(
             id=1, uid="x", title="T",
-            startTime="2026-01-06T07:00:00Z",
-            endTime="2026-01-06T07:45:00Z",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T07:45:00Z",
             status="accepted",
         )
         assert _format_duration(booking) == "45 minutes"

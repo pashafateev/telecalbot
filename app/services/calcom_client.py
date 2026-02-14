@@ -60,8 +60,8 @@ class BookingResponse(BaseModel):
     id: int
     uid: str
     title: str
-    startTime: str
-    endTime: str
+    start: str
+    end: str
     status: str
 
 
