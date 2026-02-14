@@ -46,7 +46,7 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     """Start the booking conversation with timezone selection."""
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
-        "Please select your timezone:",
+        "Выберите ваш часовой пояс:",
         reply_markup=keyboard,
     )
     return BookingState.SELECTING_TIMEZONE
@@ -76,7 +76,7 @@ async def change_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     keyboard = build_timezone_keyboard()
     await query.edit_message_text(
-        "Please select your timezone:",
+        "Выберите ваш часовой пояс:",
         reply_markup=keyboard,
     )
     return BookingState.SELECTING_TIMEZONE
@@ -91,7 +91,7 @@ async def _show_availability(
     query, context: ContextTypes.DEFAULT_TYPE, offset_days: int = 0
 ) -> int:
     """Fetch and display availability for the user's timezone."""
-    await query.edit_message_text("Fetching available times...")
+    await query.edit_message_text("Загружаю доступное время...")
 
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     timezone_id = context.user_data["timezone"]
@@ -108,14 +108,14 @@ async def _show_availability(
         has_slots = any(availability.slots.values())
         if not has_slots:
             await query.edit_message_text(
-                "No available times found for this period.",
+                "Нет доступного времени на этот период.",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "Change Timezone", callback_data="change_tz"
+                                "Сменить часовой пояс", callback_data="change_tz"
                             ),
-                            InlineKeyboardButton("Cancel", callback_data="cancel"),
+                            InlineKeyboardButton("Отмена", callback_data="cancel"),
                         ]
                     ]
                 ),
@@ -124,22 +124,22 @@ async def _show_availability(
 
         keyboard = build_availability_keyboard(availability.slots, offset_days)
         await query.edit_message_text(
-            f"Available times ({timezone_id}):\n\nSelect a time slot:",
+            f"Доступное время ({timezone_id}):\n\nВыберите время:",
             reply_markup=keyboard,
         )
         return BookingState.VIEWING_AVAILABILITY
 
     except CalComAPIError:
         await query.edit_message_text(
-            "Sorry, something went wrong fetching availability. Please try again.",
+            "Извините, не удалось загрузить расписание. Попробуйте ещё раз.",
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
                         InlineKeyboardButton(
-                            "Try Again",
+                            "Попробовать снова",
                             callback_data=f"tz:{timezone_id}",
                         ),
-                        InlineKeyboardButton("Cancel", callback_data="cancel"),
+                        InlineKeyboardButton("Отмена", callback_data="cancel"),
                     ]
                 ]
             ),
@@ -179,7 +179,7 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data["selected_date"] = parts[1]
     context.user_data["selected_time"] = parts[2]
 
-    await query.edit_message_text("Please enter your name:")
+    await query.edit_message_text("Введите ваше имя:")
     return BookingState.ENTERING_NAME
 
 
@@ -196,13 +196,13 @@ async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Yes, add email", callback_data="email_yes"),
-                InlineKeyboardButton("No, skip", callback_data="email_no"),
+                InlineKeyboardButton("Да, указать email", callback_data="email_yes"),
+                InlineKeyboardButton("Нет, пропустить", callback_data="email_no"),
             ]
         ]
     )
     await update.message.reply_text(
-        f"Got it, {name}! Would you like to add your email for a confirmation?",
+        f"Отлично, {name}! Хотите указать email для подтверждения?",
         reply_markup=keyboard,
     )
     return BookingState.EMAIL_DECISION
@@ -219,7 +219,7 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
 
     if query.data == "email_yes":
-        await query.edit_message_text("Please enter your email address:")
+        await query.edit_message_text("Введите ваш email:")
         return BookingState.ENTERING_EMAIL
     else:
         context.user_data["email"] = None
@@ -232,7 +232,7 @@ async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if "@" not in email or "." not in email.split("@")[-1]:
         await update.message.reply_text(
-            "That doesn't look like a valid email. Please try again:"
+            "Некорректный email. Попробуйте ещё раз:"
         )
         return BookingState.ENTERING_EMAIL
 
@@ -269,11 +269,11 @@ def _build_confirmation_text(data: dict) -> str:
     )
     email_line = f"\nEmail: {data['email']}" if data.get("email") else ""
     return (
-        f"Please confirm your booking:\n\n"
-        f"Time: {formatted_time}\n"
-        f"Name: {data['name']}"
+        f"Подтвердите запись:\n\n"
+        f"Время: {formatted_time}\n"
+        f"Имя: {data['name']}"
         f"{email_line}\n\n"
-        f"Tap 'Confirm Booking' to proceed."
+        f"Нажмите «Подтвердить запись» для продолжения."
     )
 
 
@@ -281,8 +281,8 @@ def _confirmation_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Confirm Booking", callback_data="confirm"),
-                InlineKeyboardButton("Cancel", callback_data="cancel"),
+                InlineKeyboardButton("Подтвердить запись", callback_data="confirm"),
+                InlineKeyboardButton("Отмена", callback_data="cancel"),
             ]
         ]
     )
@@ -298,7 +298,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
 
-    await query.edit_message_text("Creating your booking...")
+    await query.edit_message_text("Создаю запись...")
 
     data = context.user_data
     calcom_client: CalComClient = context.bot_data["calcom_client"]
@@ -330,16 +330,16 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         duration = _format_duration(booking)
         email_note = (
-            f"\nA confirmation email has been sent to {email}."
+            f"\nПисьмо с подтверждением отправлено на {email}."
             if data.get("email")
             else ""
         )
 
         await query.edit_message_text(
-            f"All set! Your appointment is confirmed.\n\n"
-            f"Time: {formatted_time}\n"
-            f"Duration: {duration}\n\n"
-            f"We'll connect via Telegram at that time."
+            f"Готово! Ваша встреча подтверждена.\n\n"
+            f"Время: {formatted_time}\n"
+            f"Длительность: {duration}\n\n"
+            f"Мы свяжемся через Telegram в назначенное время."
             f"{email_note}"
         )
         return ConversationHandler.END
@@ -347,19 +347,19 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except CalComAPIError as e:
         if e.status_code == 409:
             error_msg = (
-                "That time slot is no longer available. Please choose another time."
+                "Это время уже занято. Пожалуйста, выберите другое время."
             )
         else:
-            error_msg = "Sorry, something went wrong. Please try again."
+            error_msg = "Извините, что-то пошло не так. Попробуйте ещё раз."
 
         keyboard = InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        "Choose Another Time",
+                        "Выбрать другое время",
                         callback_data=f"tz:{data['timezone']}",
                     ),
-                    InlineKeyboardButton("Cancel", callback_data="cancel"),
+                    InlineKeyboardButton("Отмена", callback_data="cancel"),
                 ]
             ]
         )
@@ -377,9 +377,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("Booking cancelled.")
+        await query.edit_message_text("Запись отменена.")
     else:
-        await update.message.reply_text("Booking cancelled.")
+        await update.message.reply_text("Запись отменена.")
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -396,7 +396,7 @@ def build_timezone_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(label, callback_data=f"tz:{tz_id}")]
         for tz_id, label in RUSSIAN_TIMEZONES
     ]
-    buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
+    buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -432,19 +432,19 @@ def build_availability_keyboard(
     if offset_days > 0:
         nav_row.append(
             InlineKeyboardButton(
-                "← Prev Dates", callback_data=f"dates:{offset_days - 5}"
+                "← Назад", callback_data=f"dates:{offset_days - 5}"
             )
         )
     nav_row.append(
         InlineKeyboardButton(
-            "More Dates →", callback_data=f"dates:{offset_days + 5}"
+            "Ещё даты →", callback_data=f"dates:{offset_days + 5}"
         )
     )
     nav_row.append(
-        InlineKeyboardButton("Change Timezone", callback_data="change_tz")
+        InlineKeyboardButton("Сменить часовой пояс", callback_data="change_tz")
     )
     buttons.append(nav_row)
-    buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
+    buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
 
     return InlineKeyboardMarkup(buttons)
 
@@ -480,8 +480,8 @@ def _format_duration(booking: BookingResponse) -> str:
     minutes = int((end - start).total_seconds() // 60)
     if minutes >= 60 and minutes % 60 == 0:
         hours = minutes // 60
-        return f"{hours} hour{'s' if hours != 1 else ''}"
-    return f"{minutes} minutes"
+        return f"{hours} ч."
+    return f"{minutes} мин."
 
 
 def _format_datetime_display(date_str: str, time_iso: str, tz_id: str) -> str:

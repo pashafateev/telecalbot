@@ -67,7 +67,7 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             await context.bot.send_message(
                 chat_id=telegram_id,
-                text="You've been approved! Use /start to begin booking.",
+                text="Вы одобрены! Используйте /start, чтобы начать запись.",
             )
         except Exception as e:
             logger.warning(f"Failed to notify user {telegram_id}: {e}")

@@ -2,17 +2,17 @@
 
 # Russian timezones sorted by UTC offset
 RUSSIAN_TIMEZONES = [
-    ("Europe/Kaliningrad", "Kaliningrad (UTC+2)"),
-    ("Europe/Moscow", "Moscow (UTC+3)"),
-    ("Europe/Samara", "Samara (UTC+4)"),
-    ("Asia/Yekaterinburg", "Yekaterinburg (UTC+5)"),
-    ("Asia/Omsk", "Omsk (UTC+6)"),
-    ("Asia/Krasnoyarsk", "Krasnoyarsk (UTC+7)"),
-    ("Asia/Irkutsk", "Irkutsk (UTC+8)"),
-    ("Asia/Yakutsk", "Yakutsk (UTC+9)"),
-    ("Asia/Vladivostok", "Vladivostok (UTC+10)"),
-    ("Asia/Magadan", "Magadan (UTC+11)"),
-    ("Asia/Kamchatka", "Kamchatka (UTC+12)"),
+    ("Europe/Kaliningrad", "Калининград (UTC+2)"),
+    ("Europe/Moscow", "Москва (UTC+3)"),
+    ("Europe/Samara", "Самара (UTC+4)"),
+    ("Asia/Yekaterinburg", "Екатеринбург (UTC+5)"),
+    ("Asia/Omsk", "Омск (UTC+6)"),
+    ("Asia/Krasnoyarsk", "Красноярск (UTC+7)"),
+    ("Asia/Irkutsk", "Иркутск (UTC+8)"),
+    ("Asia/Yakutsk", "Якутск (UTC+9)"),
+    ("Asia/Vladivostok", "Владивосток (UTC+10)"),
+    ("Asia/Magadan", "Магадан (UTC+11)"),
+    ("Asia/Kamchatka", "Камчатка (UTC+12)"),
 ]
 
 # Default timezone
@@ -20,14 +20,14 @@ DEFAULT_TIMEZONE = "Europe/Moscow"
 
 # Message templates
 MESSAGES = {
-    "welcome": "Welcome! I can help you book appointments.",
+    "welcome": "Добро пожаловать! Я помогу вам записаться на встречу.",
     "access_denied": (
-        "This bot is for approved users only.\n\n"
-        "Your Chat ID: `{chat_id}`\n\n"
-        "An access request has been sent to the admin."
+        "Этот бот доступен только для одобренных пользователей.\n\n"
+        "Ваш Chat ID: `{chat_id}`\n\n"
+        "Запрос на доступ отправлен администратору."
     ),
-    "access_request_sent": "Access request sent. Please wait for admin approval.",
-    "access_approved": "You've been approved! Use /start to begin booking.",
-    "access_rejected": "Your access request was denied.",
-    "error_generic": "Sorry, something went wrong. Please try again later.",
+    "access_request_sent": "Запрос на доступ отправлен. Пожалуйста, дождитесь одобрения.",
+    "access_approved": "Вы одобрены! Используйте /start, чтобы начать запись.",
+    "access_rejected": "Ваш запрос на доступ отклонён.",
+    "error_generic": "Извините, что-то пошло не так. Попробуйте позже.",
 }
