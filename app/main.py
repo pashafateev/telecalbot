@@ -3,7 +3,14 @@
 import logging
 import sys
 
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.error import NetworkError
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.config import settings
 from app.database import db, run_migrations
@@ -29,6 +36,18 @@ def setup_logging() -> None:
     )
     # Reduce noise from httpx
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log uncaught exceptions from handlers and polling."""
+    logger = logging.getLogger(__name__)
+    error = context.error
+
+    if isinstance(error, NetworkError):
+        logger.warning("Transient Telegram network error: %s", error)
+        return
+
+    logger.error("Unhandled exception while processing update %r", update, exc_info=error)
 
 
 def main() -> None:
@@ -62,6 +81,7 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
     )
+    application.add_error_handler(error_handler)
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
