@@ -171,7 +171,7 @@ async def _show_availability(
         keyboard = build_availability_keyboard(availability.slots, offset_days)
         await _safe_edit_message_text(
             query,
-            f"Доступное время ({timezone_id}):\n\nВыберите время:",
+            f"Доступное время ({timezone_id}):\n\nНажмите на удобное время:",
             reply_markup=keyboard,
         )
         return BookingState.VIEWING_AVAILABILITY
@@ -465,8 +465,9 @@ def build_availability_keyboard(
             [InlineKeyboardButton(f"— {day_name} —", callback_data="noop")]
         )
 
+        sorted_time_slots = sorted(time_slots, key=lambda slot: slot.time)
         time_buttons = []
-        for slot in time_slots[:6]:
+        for slot in sorted_time_slots[:6]:
             display = format_time(slot.time)
             callback = f"slot:{date_str}:{slot.time}"
             time_buttons.append(InlineKeyboardButton(display, callback_data=callback))
@@ -512,9 +513,9 @@ def format_date_header(date_str: str) -> str:
 
 
 def format_time(time_iso: str) -> str:
-    """Format ISO datetime string to '2:00 PM'."""
+    """Format ISO datetime string to '14:00'."""
     dt = datetime.fromisoformat(time_iso)
-    return dt.strftime("%-I:%M %p")
+    return dt.strftime("%H:%M")
 
 
 def slot_to_utc(time_iso: str) -> str:

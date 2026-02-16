@@ -131,20 +131,17 @@ class TestFormatDateHeader:
 
 
 class TestFormatTime:
-    def test_formats_as_12_hour(self):
+    def test_formats_as_24_hour(self):
         result = format_time("2026-01-06T10:00:00.000+03:00")
-        assert "10:00" in result
-        assert "AM" in result
+        assert result == "10:00"
 
-    def test_afternoon_shows_pm(self):
+    def test_afternoon_stays_24_hour(self):
         result = format_time("2026-01-06T14:00:00.000+03:00")
-        assert "2:00" in result
-        assert "PM" in result
+        assert result == "14:00"
 
-    def test_midnight_shows_12_am(self):
+    def test_midnight_is_00_00(self):
         result = format_time("2026-01-06T00:00:00.000+00:00")
-        assert "12:00" in result
-        assert "AM" in result
+        assert result == "00:00"
 
 
 class TestSlotToUtc:
@@ -249,6 +246,23 @@ class TestBuildAvailabilityKeyboard:
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         noop_buttons = [b for b in all_buttons if b.callback_data == "noop"]
         assert len(noop_buttons) == 5
+
+    def test_sorts_slots_within_day(self):
+        unsorted = AvailabilityResponse(
+            slots={
+                "2026-01-06": [
+                    TimeSlot(time="2026-01-06T14:00:00.000+03:00"),
+                    TimeSlot(time="2026-01-06T10:00:00.000+03:00"),
+                    TimeSlot(time="2026-01-06T11:00:00.000+03:00"),
+                ],
+            }
+        )
+        keyboard = build_availability_keyboard(unsorted.slots)
+        all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+        slot_buttons = [
+            b for b in all_buttons if b.callback_data and b.callback_data.startswith("slot:")
+        ]
+        assert [b.text for b in slot_buttons] == ["10:00", "11:00", "14:00"]
 
 
 # ---------------------------------------------------------------------------
