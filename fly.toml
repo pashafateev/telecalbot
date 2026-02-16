@@ -6,7 +6,8 @@
 app = 'app-dry-frost-4912'
 primary_region = 'iad'
 
-[build]
+[processes]
+app = "/app/.venv/bin/python -m app.main"
 
 [http_service]
   internal_port = 8080
