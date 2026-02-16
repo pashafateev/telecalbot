@@ -447,13 +447,14 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "Сессия записи истекла из-за неактивности.\n"
         "Пожалуйста, начните заново командой /book."
     )
-    if query:
-        await query.answer()
-        await _safe_edit_message_text(query, timeout_text)
-    elif update.message:
-        await update.message.reply_text(timeout_text)
+    try:
+        if query:
+            await _safe_edit_message_text(query, timeout_text)
+        elif update.message:
+            await update.message.reply_text(timeout_text)
+    finally:
+        context.user_data.clear()
 
-    context.user_data.clear()
     return ConversationHandler.END
 
 

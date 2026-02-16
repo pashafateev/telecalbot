@@ -822,6 +822,7 @@ class TestBookingTimeout:
 
         assert result == ConversationHandler.END
         assert mock_context.user_data == {}
+        mock_update_with_query.callback_query.answer.assert_not_called()
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
 
     @pytest.mark.asyncio
@@ -833,6 +834,20 @@ class TestBookingTimeout:
         assert result == ConversationHandler.END
         assert mock_context.user_data == {}
         mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_timeout_clears_data_even_when_callback_edit_fails(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_context.user_data = {"name": "Alice", "timezone": "Europe/Moscow"}
+        mock_update_with_query.callback_query.edit_message_text.side_effect = BadRequest(
+            "query is too old and response timeout expired or query id is invalid"
+        )
+
+        with pytest.raises(BadRequest):
+            await booking_timeout(mock_update_with_query, mock_context)
+
+        assert mock_context.user_data == {}
 
 
 class TestCreateBookingHandler:
