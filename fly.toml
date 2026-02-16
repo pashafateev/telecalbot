@@ -5,7 +5,7 @@ primary_region = "fra"
 DATABASE_PATH = "/data/telecalbot.db"
 
 [processes]
-app = "uv run python -m app.main"
+app = "/app/.venv/bin/python -m app.main"
 
 [[mounts]]
 source = "telecalbot_data"
