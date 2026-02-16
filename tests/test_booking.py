@@ -212,8 +212,17 @@ class TestBuildAvailabilityKeyboard:
         keyboard = build_availability_keyboard(availability_response.slots)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         labels = [btn.text for btn in all_buttons]
-        assert "Часовой пояс ⚙️" in labels
+        assert "Часовой пояс" in labels
         assert "Сменить часовой пояс" not in labels
+
+    def test_timezone_button_is_on_separate_row(self, availability_response):
+        keyboard = build_availability_keyboard(availability_response.slots)
+        timezone_rows = [
+            row
+            for row in keyboard.inline_keyboard
+            if len(row) == 1 and row[0].text == "Часовой пояс"
+        ]
+        assert len(timezone_rows) == 1
 
     def test_max_6_slots_per_day(self):
         many_slots = AvailabilityResponse(
@@ -713,6 +722,28 @@ class TestConfirmBooking:
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "Europe/Moscow" in final_message
+
+    @pytest.mark.asyncio
+    async def test_uses_russian_datetime_in_confirmation(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+        mock_calcom_client.create_booking.return_value = booking_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.calcom_event_type_id = 42
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "Вторник" in final_message
+        assert "янв" in final_message
+        assert "в 10:00" in final_message
 
 
 class TestCancel:

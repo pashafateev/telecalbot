@@ -6,7 +6,7 @@ import pytest
 
 from app.database import Database
 from app.database.migrations import initialize_schema
-from app.handlers.start import start_command
+from app.handlers.start import start_command, text_onboarding_or_help
 from app.services.whitelist import WhitelistService
 
 
@@ -166,3 +166,33 @@ class TestStartCommandAccessControl:
         # Should see welcome/help flow, not access denied
         first_response = mock_update.message.reply_text.call_args_list[0][0][0]
         assert "одобренных" not in first_response.lower()
+
+
+class TestTextOnboardingOrHelp:
+    """Tests for plain text fallback handler."""
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_user_gets_help(
+        self, mock_update, mock_context, whitelist_service
+    ):
+        whitelist_service.add_to_whitelist(
+            telegram_id=12345,
+            display_name="Test",
+            username="testuser",
+            approved_by=789,
+        )
+
+        await text_onboarding_or_help(mock_update, mock_context)
+
+        response = mock_update.message.reply_text.call_args[0][0]
+        assert "/book" in response
+        assert "/help" in response
+
+    @pytest.mark.asyncio
+    async def test_non_whitelisted_user_gets_start_flow(
+        self, mock_update, mock_context
+    ):
+        await text_onboarding_or_help(mock_update, mock_context)
+
+        response = mock_update.message.reply_text.call_args[0][0]
+        assert "одобренных" in response.lower() or "доступ" in response.lower()

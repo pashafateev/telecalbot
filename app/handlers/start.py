@@ -57,6 +57,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 
+async def text_onboarding_or_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle plain-text messages outside commands/conversations.
+
+    - Whitelisted users see help immediately.
+    - New users get the same access-request flow as /start.
+    """
+    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
+    user_id = update.effective_user.id
+
+    if whitelist_service.is_whitelisted(user_id):
+        await help_command(update, context)
+        return
+
+    await start_command(update, context)
+
+
 async def _notify_admin_of_request(context: ContextTypes.DEFAULT_TYPE, user) -> None:
     """Send notification to admin about new access request."""
     username_str = f"@{user.username}" if user.username else "(no username)"

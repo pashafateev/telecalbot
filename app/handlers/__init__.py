@@ -3,7 +3,7 @@
 from app.handlers.admin import approve_command, pending_command, reject_command
 from app.handlers.booking import create_booking_handler
 from app.handlers.help import help_command
-from app.handlers.start import start_command
+from app.handlers.start import start_command, text_onboarding_or_help
 
 __all__ = [
     "approve_command",
@@ -12,4 +12,5 @@ __all__ = [
     "pending_command",
     "reject_command",
     "start_command",
+    "text_onboarding_or_help",
 ]
