@@ -9,4 +9,4 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY app/ ./app/
 
-CMD ["uv", "run", "python", "-m", "app.main"]
+CMD ["/app/.venv/bin/python", "-m", "app.main"]
