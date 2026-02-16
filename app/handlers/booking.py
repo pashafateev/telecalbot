@@ -52,7 +52,7 @@ RUSSIAN_MONTHS_ABBR = [
     "дек",
 ]
 
-TIMEZONE_BUTTON_LABEL = "Часовой пояс ⚙️"
+TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 
 
 class BookingState(IntEnum):
@@ -489,10 +489,10 @@ def build_availability_keyboard(
             "Ещё даты →", callback_data=f"dates:{offset_days + 5}"
         )
     )
-    nav_row.append(
-        InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")
-    )
     buttons.append(nav_row)
+    buttons.append(
+        [InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")]
+    )
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
 
     return InlineKeyboardMarkup(buttons)
@@ -538,7 +538,10 @@ def _format_duration(booking: BookingResponse) -> str:
 def _format_datetime_display(date_str: str, time_iso: str, tz_id: str) -> str:
     """Format date and time for user-facing display."""
     dt = datetime.fromisoformat(time_iso)
-    return f"{dt.strftime('%A, %B %-d at %-I:%M %p')} ({tz_id})"
+    weekday = RUSSIAN_WEEKDAYS[dt.weekday()]
+    month_abbr = RUSSIAN_MONTHS_ABBR[dt.month - 1]
+    time_value = dt.strftime("%H:%M")
+    return f"{weekday}, {dt.day} {month_abbr} в {time_value} ({tz_id})"
 
 
 # ---------------------------------------------------------------------------

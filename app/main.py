@@ -3,7 +3,7 @@
 import logging
 import sys
 
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.config import settings
 from app.database import db, run_migrations
@@ -14,6 +14,7 @@ from app.handlers import (
     pending_command,
     reject_command,
     start_command,
+    text_onboarding_or_help,
 )
 from app.services.calcom_client import CalComClient
 from app.services.whitelist import WhitelistService
@@ -58,6 +59,9 @@ def main() -> None:
     application.add_handler(CommandHandler("pending", pending_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(create_booking_handler())
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
+    )
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
