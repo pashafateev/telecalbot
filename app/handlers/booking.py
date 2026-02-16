@@ -26,6 +26,31 @@ from app.services.calcom_client import (
 
 logger = logging.getLogger(__name__)
 
+RUSSIAN_WEEKDAYS = [
+    "Понедельник",
+    "Вторник",
+    "Среда",
+    "Четверг",
+    "Пятница",
+    "Суббота",
+    "Воскресенье",
+]
+
+RUSSIAN_MONTHS_ABBR = [
+    "янв",
+    "фев",
+    "мар",
+    "апр",
+    "мая",
+    "июн",
+    "июл",
+    "авг",
+    "сен",
+    "окт",
+    "ноя",
+    "дек",
+]
+
 
 class BookingState(IntEnum):
     SELECTING_TIMEZONE = auto()
@@ -455,9 +480,11 @@ def build_availability_keyboard(
 
 
 def format_date_header(date_str: str) -> str:
-    """Format 'YYYY-MM-DD' to 'Monday, Jan 6'."""
+    """Format 'YYYY-MM-DD' to 'Понедельник, 6 янв'."""
     dt = date.fromisoformat(date_str)
-    return dt.strftime("%A, %b %-d")
+    weekday = RUSSIAN_WEEKDAYS[dt.weekday()]
+    month_abbr = RUSSIAN_MONTHS_ABBR[dt.month - 1]
+    return f"{weekday}, {dt.day} {month_abbr}"
 
 
 def format_time(time_iso: str) -> str:
