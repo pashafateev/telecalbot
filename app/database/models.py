@@ -31,3 +31,18 @@ class UserPreference(BaseModel):
     telegram_id: int
     timezone: str
     updated_at: datetime
+
+
+class StoredBooking(BaseModel):
+    """Booking record persisted for cancellation lookup."""
+
+    id: int
+    telegram_id: int
+    calcom_booking_id: int
+    calcom_booking_uid: str
+    title: str
+    start: datetime
+    end: datetime
+    status: str
+    created_at: datetime
+    cancelled_at: datetime | None = None

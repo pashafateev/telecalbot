@@ -1,6 +1,6 @@
 """Tests for the booking conversation handler."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,12 +13,18 @@ from app.handlers.booking import (
     _format_duration,
     booking_timeout,
     book_command,
+    cancel_booking_back,
+    cancel_booking_command,
+    cancel_booking_confirm,
+    cancel_booking_select,
     build_availability_keyboard,
+    build_cancel_booking_keyboard,
     build_timezone_keyboard,
     cancel,
     change_timezone,
     confirm_booking,
-    create_booking_handler,
+    create_booking_conversation_handler,
+    create_cancel_booking_flow_handlers,
     email_decision,
     enter_email,
     enter_name,
@@ -86,6 +92,7 @@ def mock_calcom_client():
     client = AsyncMock()
     client.get_availability = AsyncMock()
     client.create_booking = AsyncMock()
+    client.cancel_booking = AsyncMock()
     return client
 
 
@@ -93,7 +100,11 @@ def mock_calcom_client():
 def mock_context(mock_calcom_client):
     context = MagicMock()
     context.bot = AsyncMock()
-    context.bot_data = {"calcom_client": mock_calcom_client}
+    context.bot_data = {
+        "calcom_client": mock_calcom_client,
+        "booking_service": MagicMock(),
+        "whitelist_service": MagicMock(),
+    }
     context.user_data = {}
     return context
 
@@ -654,6 +665,27 @@ class TestConfirmBooking:
         assert "подтверждена" in final_message.lower() or "готово" in final_message.lower()
 
     @pytest.mark.asyncio
+    async def test_persists_booking_for_cancel_flow(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+        mock_calcom_client.create_booking.return_value = booking_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.calcom_event_type_id = 42
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["booking_service"].save_booking.assert_called_once_with(
+            12345, booking_response
+        )
+
+    @pytest.mark.asyncio
     async def test_uses_placeholder_email_when_none(
         self,
         mock_update_with_query,
@@ -874,16 +906,137 @@ class TestBookingTimeout:
         assert mock_context.user_data == {}
 
 
+class TestCancelBookingCommand:
+    @pytest.mark.asyncio
+    async def test_requires_whitelist(self, mock_update, mock_context):
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = False
+
+        await cancel_booking_command(mock_update, mock_context)
+
+        response = mock_update.message.reply_text.call_args[0][0]
+        assert "только одобренным" in response
+
+    @pytest.mark.asyncio
+    async def test_shows_no_bookings_message(self, mock_update, mock_context):
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
+        mock_context.bot_data["booking_service"].list_upcoming_bookings.return_value = []
+
+        await cancel_booking_command(mock_update, mock_context)
+
+        response = mock_update.message.reply_text.call_args[0][0]
+        assert "нет предстоящих записей" in response.lower()
+
+    @pytest.mark.asyncio
+    async def test_shows_keyboard_for_upcoming_bookings(self, mock_update, mock_context):
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
+        booking = MagicMock()
+        booking.id = 7
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].list_upcoming_bookings.return_value = [booking]
+
+        await cancel_booking_command(mock_update, mock_context)
+
+        kwargs = mock_update.message.reply_text.call_args[1]
+        assert "reply_markup" in kwargs
+
+
+class TestCancelBookingCallbacks:
+    @pytest.mark.asyncio
+    async def test_select_shows_confirmation(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "cancel_booking_select:3"
+        booking = MagicMock()
+        booking.id = 3
+        booking.status = "active"
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        booking.end = datetime(2026, 1, 6, 8, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].get_booking_for_user.return_value = booking
+
+        await cancel_booking_select(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.edit_message_text.assert_called_once()
+        call_text = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "Вы уверены" in call_text
+
+    @pytest.mark.asyncio
+    async def test_confirm_cancels_booking(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
+        booking = MagicMock()
+        booking.id = 3
+        booking.status = "active"
+        booking.title = "Step session"
+        booking.calcom_booking_id = 99
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        booking.end = datetime(2026, 1, 6, 8, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].get_booking_for_user.return_value = booking
+
+        await cancel_booking_confirm(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["calcom_client"].cancel_booking.assert_awaited_once_with(99)
+        mock_context.bot_data["booking_service"].mark_cancelled.assert_called_once_with(3, 12345)
+
+    @pytest.mark.asyncio
+    async def test_confirm_handles_calcom_error(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
+        booking = MagicMock()
+        booking.id = 3
+        booking.status = "active"
+        booking.calcom_booking_id = 99
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        booking.end = datetime(2026, 1, 6, 8, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].get_booking_for_user.return_value = booking
+        mock_context.bot_data["calcom_client"].cancel_booking.side_effect = CalComAPIError(
+            500, "server"
+        )
+
+        await cancel_booking_confirm(mock_update_with_query, mock_context)
+
+        text = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "Не удалось отменить" in text
+
+    @pytest.mark.asyncio
+    async def test_back_shows_booking_list(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "cancel_booking_back"
+        booking = MagicMock()
+        booking.id = 7
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].list_upcoming_bookings.return_value = [booking]
+
+        await cancel_booking_back(mock_update_with_query, mock_context)
+
+        text = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "Выберите запись" in text
+
+
+class TestCancelBookingHandlerFactory:
+    def test_create_cancel_booking_flow_handlers_returns_four_handlers(self):
+        handlers = create_cancel_booking_flow_handlers()
+        assert len(handlers) == 4
+
+    def test_build_cancel_booking_keyboard(self):
+        booking = MagicMock()
+        booking.id = 12
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+
+        keyboard = build_cancel_booking_keyboard([booking])
+        first_button = keyboard.inline_keyboard[0][0]
+        assert first_button.callback_data == "cancel_booking_select:12"
+
+
 class TestCreateBookingHandler:
     def test_sets_conversation_timeout_from_config(self):
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.booking_conversation_timeout_seconds = 900
-            handler = create_booking_handler()
+            handler = create_booking_conversation_handler()
 
         assert handler.conversation_timeout == timedelta(seconds=900)
 
     def test_registers_timeout_state_handler(self):
-        handler = create_booking_handler()
+        handler = create_booking_conversation_handler()
 
         assert ConversationHandler.TIMEOUT in handler.states
         timeout_handlers = handler.states[ConversationHandler.TIMEOUT]

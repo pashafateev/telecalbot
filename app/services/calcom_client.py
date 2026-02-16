@@ -183,6 +183,17 @@ class CalComClient:
 
         return BookingResponse.model_validate(response["data"])
 
+    async def cancel_booking(self, booking_id: int | str) -> None:
+        """Cancel an existing booking by Cal.com booking identifier."""
+        await self._request(
+            "POST",
+            f"/bookings/{booking_id}/cancel",
+            json={},
+        )
+        # Keep cache consistent with changed availability
+        self._availability_cache.clear()
+        logger.debug("Cleared availability cache after booking cancellation")
+
     async def _request(
         self,
         method: str,
