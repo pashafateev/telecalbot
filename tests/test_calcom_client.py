@@ -4,6 +4,7 @@ import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.services.calcom_client import (
@@ -342,6 +343,93 @@ class TestCalComClient:
                 timezone="Europe/Moscow",
             )
             assert mock_request.call_count == 3  # Cache was cleared
+
+
+class TestCalComClientRetry:
+    """Test retry behavior in low-level request method."""
+
+    @pytest.fixture
+    def client(self):
+        return CalComClient(
+            api_key="test_key",
+            api_version="2024-06-14",
+            cache_ttl=300,
+        )
+
+    @staticmethod
+    def _http_status_error(status_code: int, text: str) -> httpx.HTTPStatusError:
+        request = httpx.Request("GET", "https://api.cal.com/v2/test")
+        response = httpx.Response(status_code, text=text, request=request)
+        return httpx.HTTPStatusError(
+            message=f"Error response {status_code}",
+            request=request,
+            response=response,
+        )
+
+    @pytest.mark.asyncio
+    async def test_retries_retryable_status_then_succeeds(self, client):
+        with (
+            patch.object(
+                client._client, "request", new_callable=AsyncMock
+            ) as mock_request,
+            patch(
+                "app.services.calcom_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep,
+        ):
+            mock_request.side_effect = [
+                self._http_status_error(429, "rate limited"),
+                httpx.Response(
+                    200,
+                    request=httpx.Request("GET", "https://api.cal.com/v2/test"),
+                    json={"status": "success", "data": {"ok": True}},
+                ),
+            ]
+
+            result = await client._request("GET", "/test")
+
+            assert result == {"status": "success", "data": {"ok": True}}
+            assert mock_request.call_count == 2
+            mock_sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_non_retryable_status(self, client):
+        with (
+            patch.object(
+                client._client, "request", new_callable=AsyncMock
+            ) as mock_request,
+            patch(
+                "app.services.calcom_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep,
+        ):
+            mock_request.side_effect = [self._http_status_error(400, "bad request")]
+
+            with pytest.raises(CalComAPIError) as exc_info:
+                await client._request("GET", "/test")
+
+            assert exc_info.value.status_code == 400
+            assert mock_request.call_count == 1
+            mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_raises_after_retry_exhausted(self, client):
+        with (
+            patch.object(
+                client._client, "request", new_callable=AsyncMock
+            ) as mock_request,
+            patch(
+                "app.services.calcom_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep,
+        ):
+            mock_request.side_effect = [
+                self._http_status_error(503, "unavailable") for _ in range(4)
+            ]
+
+            with pytest.raises(CalComAPIError) as exc_info:
+                await client._request("GET", "/test")
+
+            assert exc_info.value.status_code == 503
+            assert mock_request.call_count == 4
+            assert mock_sleep.await_count == 3
 
 
 class TestCalComClientClose:

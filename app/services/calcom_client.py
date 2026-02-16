@@ -1,5 +1,6 @@
 """Cal.com API client with caching."""
 
+import asyncio
 import logging
 import time
 from datetime import date
@@ -69,6 +70,9 @@ class CalComClient:
     """Async Cal.com API client with caching."""
 
     BASE_URL = "https://api.cal.com/v2"
+    MAX_RETRIES = 3
+    INITIAL_RETRY_DELAY_SECONDS = 0.5
+    RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 
     def __init__(
         self,
@@ -198,20 +202,40 @@ class CalComClient:
         Raises:
             CalComAPIError: If request fails.
         """
-        try:
-            response = await self._client.request(method, path, **kwargs)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Cal.com API error %d: %s",
-                e.response.status_code,
-                e.response.text,
+        delay_seconds = self.INITIAL_RETRY_DELAY_SECONDS
+        last_error: CalComAPIError | None = None
+
+        for attempt in range(1, self.MAX_RETRIES + 2):
+            try:
+                response = await self._client.request(method, path, **kwargs)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                message = e.response.text
+                logger.error("Cal.com API error %d: %s", status_code, message)
+
+                last_error = CalComAPIError(status_code=status_code, message=message)
+                should_retry = status_code in self.RETRYABLE_STATUS_CODES
+            except httpx.RequestError as e:
+                message = str(e)
+                logger.error("Cal.com API network error: %s", message)
+
+                last_error = CalComAPIError(status_code=0, message=message)
+                should_retry = True
+
+            if not should_retry or attempt > self.MAX_RETRIES:
+                raise last_error
+
+            logger.warning(
+                "Retrying Cal.com request %s %s (attempt %d/%d) after %.1fs",
+                method,
+                path,
+                attempt + 1,
+                self.MAX_RETRIES + 1,
+                delay_seconds,
             )
-            raise CalComAPIError(
-                status_code=e.response.status_code,
-                message=e.response.text,
-            )
-        except httpx.RequestError as e:
-            logger.error("Cal.com API network error: %s", str(e))
-            raise CalComAPIError(status_code=0, message=str(e))
+            await asyncio.sleep(delay_seconds)
+            delay_seconds *= 2
+
+        raise last_error
