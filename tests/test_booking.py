@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
 from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
@@ -49,6 +50,8 @@ def mock_query():
     q = AsyncMock()
     q.answer = AsyncMock()
     q.edit_message_text = AsyncMock()
+    q.message = AsyncMock()
+    q.message.reply_text = AsyncMock()
     return q
 
 
@@ -747,6 +750,21 @@ class TestCancel:
         msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "отменена" in msg.lower()
 
+    @pytest.mark.asyncio
+    async def test_cancel_falls_back_to_reply_when_edit_not_allowed(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel"
+        mock_update_with_query.callback_query.edit_message_text.side_effect = (
+            BadRequest("Message can't be edited")
+        )
+
+        await cancel(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.message.reply_text.assert_called_once()
+        msg = mock_update_with_query.callback_query.message.reply_text.call_args[0][0]
+        assert "отменена" in msg.lower()
+
 
 class TestLoadMoreDates:
     @pytest.mark.asyncio
@@ -779,6 +797,20 @@ class TestChangeTimezone:
 
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
         call_kwargs = mock_update_with_query.callback_query.edit_message_text.call_args[1]
+        assert "reply_markup" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_reply_when_edit_not_allowed(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.edit_message_text.side_effect = (
+            BadRequest("Message can't be edited")
+        )
+
+        await change_timezone(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.message.reply_text.assert_called_once()
+        call_kwargs = mock_update_with_query.callback_query.message.reply_text.call_args[1]
         assert "reply_markup" in call_kwargs
 
 
