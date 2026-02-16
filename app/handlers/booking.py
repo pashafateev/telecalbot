@@ -51,6 +51,8 @@ RUSSIAN_MONTHS_ABBR = [
     "дек",
 ]
 
+TIMEZONE_BUTTON_LABEL = "Часовой пояс ⚙️"
+
 
 class BookingState(IntEnum):
     SELECTING_TIMEZONE = auto()
@@ -138,7 +140,7 @@ async def _show_availability(
                     [
                         [
                             InlineKeyboardButton(
-                                "Сменить часовой пояс", callback_data="change_tz"
+                                TIMEZONE_BUTTON_LABEL, callback_data="change_tz"
                             ),
                             InlineKeyboardButton("Отмена", callback_data="cancel"),
                         ]
@@ -466,7 +468,7 @@ def build_availability_keyboard(
         )
     )
     nav_row.append(
-        InlineKeyboardButton("Сменить часовой пояс", callback_data="change_tz")
+        InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")
     )
     buttons.append(nav_row)
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])

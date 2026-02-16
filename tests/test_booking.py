@@ -205,6 +205,13 @@ class TestBuildAvailabilityKeyboard:
         labels = [btn.text for btn in all_buttons]
         assert "Отмена" in labels
 
+    def test_uses_short_timezone_button_label(self, availability_response):
+        keyboard = build_availability_keyboard(availability_response.slots)
+        all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+        labels = [btn.text for btn in all_buttons]
+        assert "Часовой пояс ⚙️" in labels
+        assert "Сменить часовой пояс" not in labels
+
     def test_max_6_slots_per_day(self):
         many_slots = AvailabilityResponse(
             slots={
