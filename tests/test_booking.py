@@ -115,15 +115,16 @@ def availability_response():
 
 
 class TestFormatDateHeader:
-    def test_formats_date_as_weekday_month_day(self):
+    def test_formats_date_as_russian_weekday_month_day(self):
         result = format_date_header("2026-01-06")
-        assert "Tuesday" in result
-        assert "Jan" in result
+        assert "Вторник" in result
+        assert "янв" in result
         assert "6" in result
 
     def test_no_leading_zero_on_day(self):
         result = format_date_header("2026-01-06")
         assert " 06" not in result
+        assert result == "Вторник, 6 янв"
 
 
 class TestFormatTime:
