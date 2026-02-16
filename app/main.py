@@ -9,8 +9,8 @@ from app.config import settings
 from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
-    create_booking_handler,
-    create_cancel_booking_handlers,
+    create_booking_conversation_handler,
+    create_cancel_booking_flow_handlers,
     help_command,
     pending_command,
     reject_command,
@@ -61,8 +61,8 @@ def main() -> None:
     application.add_handler(CommandHandler("reject", reject_command))
     application.add_handler(CommandHandler("pending", pending_command))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(create_booking_handler())
-    for handler in create_cancel_booking_handlers():
+    application.add_handler(create_booking_conversation_handler())
+    for handler in create_cancel_booking_flow_handlers():
         application.add_handler(handler)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)

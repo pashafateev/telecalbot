@@ -23,8 +23,8 @@ from app.handlers.booking import (
     cancel,
     change_timezone,
     confirm_booking,
-    create_booking_handler,
-    create_cancel_booking_handlers,
+    create_booking_conversation_handler,
+    create_cancel_booking_flow_handlers,
     email_decision,
     enter_email,
     enter_name,
@@ -1012,8 +1012,8 @@ class TestCancelBookingCallbacks:
 
 
 class TestCancelBookingHandlerFactory:
-    def test_create_cancel_booking_handlers_returns_four_handlers(self):
-        handlers = create_cancel_booking_handlers()
+    def test_create_cancel_booking_flow_handlers_returns_four_handlers(self):
+        handlers = create_cancel_booking_flow_handlers()
         assert len(handlers) == 4
 
     def test_build_cancel_booking_keyboard(self):
@@ -1031,12 +1031,12 @@ class TestCreateBookingHandler:
     def test_sets_conversation_timeout_from_config(self):
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.booking_conversation_timeout_seconds = 900
-            handler = create_booking_handler()
+            handler = create_booking_conversation_handler()
 
         assert handler.conversation_timeout == timedelta(seconds=900)
 
     def test_registers_timeout_state_handler(self):
-        handler = create_booking_handler()
+        handler = create_booking_conversation_handler()
 
         assert ConversationHandler.TIMEOUT in handler.states
         timeout_handlers = handler.states[ConversationHandler.TIMEOUT]

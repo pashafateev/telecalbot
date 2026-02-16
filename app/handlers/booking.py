@@ -615,7 +615,7 @@ async def cancel_booking_back(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-def create_cancel_booking_handlers() -> list:
+def create_cancel_booking_flow_handlers() -> list:
     """Create handlers for /cancel_booking flow."""
     return [
         CommandHandler("cancel_booking", cancel_booking_command),
@@ -788,7 +788,7 @@ def _format_stored_booking_summary(booking) -> str:
 # ---------------------------------------------------------------------------
 
 
-def create_booking_handler() -> ConversationHandler:
+def create_booking_conversation_handler() -> ConversationHandler:
     """Create and return the booking ConversationHandler."""
     return ConversationHandler(
         entry_points=[CommandHandler("book", book_command)],
