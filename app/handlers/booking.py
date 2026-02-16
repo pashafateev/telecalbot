@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum, auto
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -64,6 +65,22 @@ class BookingState(IntEnum):
     CONFIRMING = auto()
 
 
+def _is_non_editable_message_error(error: BadRequest) -> bool:
+    text = str(error).lower()
+    return "can't be edited" in text or "can not be edited" in text
+
+
+async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
+    """Edit callback message, fallback to a new message when editing is not possible."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as error:
+        if _is_non_editable_message_error(error) and query.message:
+            await query.message.reply_text(text, reply_markup=reply_markup)
+            return
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -102,7 +119,8 @@ async def change_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     keyboard = build_timezone_keyboard()
-    await query.edit_message_text(
+    await _safe_edit_message_text(
+        query,
         "Выберите ваш часовой пояс:",
         reply_markup=keyboard,
     )
@@ -118,7 +136,7 @@ async def _show_availability(
     query, context: ContextTypes.DEFAULT_TYPE, offset_days: int = 0
 ) -> int:
     """Fetch and display availability for the user's timezone."""
-    await query.edit_message_text("Загружаю доступное время...")
+    await _safe_edit_message_text(query, "Загружаю доступное время...")
 
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     timezone_id = context.user_data["timezone"]
@@ -134,7 +152,8 @@ async def _show_availability(
 
         has_slots = any(availability.slots.values())
         if not has_slots:
-            await query.edit_message_text(
+            await _safe_edit_message_text(
+                query,
                 "Нет доступного времени на этот период.",
                 reply_markup=InlineKeyboardMarkup(
                     [
@@ -150,14 +169,16 @@ async def _show_availability(
             return BookingState.VIEWING_AVAILABILITY
 
         keyboard = build_availability_keyboard(availability.slots, offset_days)
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             f"Доступное время ({timezone_id}):\n\nВыберите время:",
             reply_markup=keyboard,
         )
         return BookingState.VIEWING_AVAILABILITY
 
     except CalComAPIError:
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             "Извините, не удалось загрузить расписание. Попробуйте ещё раз.",
             reply_markup=InlineKeyboardMarkup(
                 [
@@ -206,7 +227,7 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data["selected_date"] = parts[1]
     context.user_data["selected_time"] = parts[2]
 
-    await query.edit_message_text("Введите ваше имя:")
+    await _safe_edit_message_text(query, "Введите ваше имя:")
     return BookingState.ENTERING_NAME
 
 
@@ -246,7 +267,7 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
 
     if query.data == "email_yes":
-        await query.edit_message_text("Введите ваш email:")
+        await _safe_edit_message_text(query, "Введите ваш email:")
         return BookingState.ENTERING_EMAIL
     else:
         context.user_data["email"] = None
@@ -277,7 +298,7 @@ async def _show_confirmation_edit(query, context: ContextTypes.DEFAULT_TYPE) -> 
     """Edit message to show booking confirmation."""
     text = _build_confirmation_text(context.user_data)
     keyboard = _confirmation_keyboard()
-    await query.edit_message_text(text, reply_markup=keyboard)
+    await _safe_edit_message_text(query, text, reply_markup=keyboard)
     return BookingState.CONFIRMING
 
 
@@ -325,7 +346,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
 
-    await query.edit_message_text("Создаю запись...")
+    await _safe_edit_message_text(query, "Создаю запись...")
 
     data = context.user_data
     calcom_client: CalComClient = context.bot_data["calcom_client"]
@@ -362,7 +383,8 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             else ""
         )
 
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             f"Готово! Ваша встреча подтверждена.\n\n"
             f"Время: {formatted_time}\n"
             f"Длительность: {duration}\n\n"
@@ -390,7 +412,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 ]
             ]
         )
-        await query.edit_message_text(error_msg, reply_markup=keyboard)
+        await _safe_edit_message_text(query, error_msg, reply_markup=keyboard)
         return BookingState.VIEWING_AVAILABILITY
 
 
@@ -404,7 +426,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("Запись отменена.")
+        await _safe_edit_message_text(query, "Запись отменена.")
     else:
         await update.message.reply_text("Запись отменена.")
 
