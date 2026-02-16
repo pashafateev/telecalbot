@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
 from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
@@ -49,6 +50,8 @@ def mock_query():
     q = AsyncMock()
     q.answer = AsyncMock()
     q.edit_message_text = AsyncMock()
+    q.message = AsyncMock()
+    q.message.reply_text = AsyncMock()
     return q
 
 
@@ -115,15 +118,16 @@ def availability_response():
 
 
 class TestFormatDateHeader:
-    def test_formats_date_as_weekday_month_day(self):
+    def test_formats_date_as_russian_weekday_month_day(self):
         result = format_date_header("2026-01-06")
-        assert "Tuesday" in result
-        assert "Jan" in result
+        assert "Вторник" in result
+        assert "янв" in result
         assert "6" in result
 
     def test_no_leading_zero_on_day(self):
         result = format_date_header("2026-01-06")
         assert " 06" not in result
+        assert result == "Вторник, 6 янв"
 
 
 class TestFormatTime:
@@ -203,6 +207,13 @@ class TestBuildAvailabilityKeyboard:
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         labels = [btn.text for btn in all_buttons]
         assert "Отмена" in labels
+
+    def test_uses_short_timezone_button_label(self, availability_response):
+        keyboard = build_availability_keyboard(availability_response.slots)
+        all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+        labels = [btn.text for btn in all_buttons]
+        assert "Часовой пояс ⚙️" in labels
+        assert "Сменить часовой пояс" not in labels
 
     def test_max_6_slots_per_day(self):
         many_slots = AvailabilityResponse(
@@ -739,6 +750,21 @@ class TestCancel:
         msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "отменена" in msg.lower()
 
+    @pytest.mark.asyncio
+    async def test_cancel_falls_back_to_reply_when_edit_not_allowed(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel"
+        mock_update_with_query.callback_query.edit_message_text.side_effect = (
+            BadRequest("Message can't be edited")
+        )
+
+        await cancel(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.message.reply_text.assert_called_once()
+        msg = mock_update_with_query.callback_query.message.reply_text.call_args[0][0]
+        assert "отменена" in msg.lower()
+
 
 class TestLoadMoreDates:
     @pytest.mark.asyncio
@@ -771,6 +797,20 @@ class TestChangeTimezone:
 
         mock_update_with_query.callback_query.edit_message_text.assert_called_once()
         call_kwargs = mock_update_with_query.callback_query.edit_message_text.call_args[1]
+        assert "reply_markup" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_reply_when_edit_not_allowed(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.edit_message_text.side_effect = (
+            BadRequest("Message can't be edited")
+        )
+
+        await change_timezone(mock_update_with_query, mock_context)
+
+        mock_update_with_query.callback_query.message.reply_text.assert_called_once()
+        call_kwargs = mock_update_with_query.callback_query.message.reply_text.call_args[1]
         assert "reply_markup" in call_kwargs
 
 

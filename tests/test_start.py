@@ -48,7 +48,7 @@ class TestStartCommandAccessControl:
     async def test_whitelisted_user_sees_welcome(
         self, mock_update, mock_context, whitelist_service
     ):
-        """Whitelisted user sees welcome message."""
+        """Whitelisted user sees welcome message and help menu."""
         # Add user to whitelist
         whitelist_service.add_to_whitelist(
             telegram_id=12345,
@@ -59,9 +59,15 @@ class TestStartCommandAccessControl:
 
         await start_command(mock_update, mock_context)
 
-        mock_update.message.reply_text.assert_called_once()
-        response = mock_update.message.reply_text.call_args[0][0]
-        assert "добро пожаловать" in response.lower() or "записаться" in response.lower()
+        assert mock_update.message.reply_text.call_count == 2
+        first_response = mock_update.message.reply_text.call_args_list[0][0][0]
+        second_response = mock_update.message.reply_text.call_args_list[1][0][0]
+        assert (
+            "добро пожаловать" in first_response.lower()
+            or "записаться" in first_response.lower()
+        )
+        assert "/book" in second_response
+        assert "/help" in second_response
 
     @pytest.mark.asyncio
     async def test_non_whitelisted_user_sees_access_denied(
@@ -157,6 +163,6 @@ class TestStartCommandAccessControl:
         # Admin should be whitelisted
         assert whitelist_service.is_whitelisted(12345) is True
 
-        # Should see welcome, not access denied
-        response = mock_update.message.reply_text.call_args[0][0]
-        assert "одобренных" not in response.lower() or "добро пожаловать" in response.lower()
+        # Should see welcome/help flow, not access denied
+        first_response = mock_update.message.reply_text.call_args_list[0][0][0]
+        assert "одобренных" not in first_response.lower()
