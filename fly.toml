@@ -1,0 +1,12 @@
+app = "telecalbot"
+primary_region = "fra"
+
+[env]
+DATABASE_PATH = "/data/telecalbot.db"
+
+[processes]
+app = "uv run python -m app.main"
+
+[[mounts]]
+source = "telecalbot_data"
+destination = "/data"
