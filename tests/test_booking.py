@@ -409,6 +409,30 @@ class TestEnterName:
         call_kwargs = mock_update.message.reply_text.call_args[1]
         assert "reply_markup" in call_kwargs
 
+    @pytest.mark.asyncio
+    async def test_rejects_empty_name(self, mock_update, mock_context):
+        mock_update.message.text = "   "
+
+        result = await enter_name(mock_update, mock_context)
+
+        assert result == BookingState.ENTERING_NAME
+        assert "name" not in mock_context.user_data
+        mock_update.message.reply_text.assert_called_once()
+        msg = mock_update.message.reply_text.call_args[0][0]
+        assert "не может быть пустым" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_too_long_name(self, mock_update, mock_context):
+        mock_update.message.text = "A" * 101
+
+        result = await enter_name(mock_update, mock_context)
+
+        assert result == BookingState.ENTERING_NAME
+        assert "name" not in mock_context.user_data
+        mock_update.message.reply_text.assert_called_once()
+        msg = mock_update.message.reply_text.call_args[0][0]
+        assert "слишком длин" in msg.lower()
+
 
 class TestEmailDecision:
     @pytest.mark.asyncio

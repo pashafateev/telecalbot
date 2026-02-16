@@ -53,6 +53,7 @@ RUSSIAN_MONTHS_ABBR = [
 ]
 
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
+MAX_NAME_LENGTH = 100
 
 
 class BookingState(IntEnum):
@@ -239,6 +240,18 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store user's name and ask about email."""
     name = update.message.text.strip()
+
+    if not name:
+        await update.message.reply_text("Имя не может быть пустым. Введите ваше имя:")
+        return BookingState.ENTERING_NAME
+
+    if len(name) > MAX_NAME_LENGTH:
+        await update.message.reply_text(
+            f"Имя слишком длинное (максимум {MAX_NAME_LENGTH} символов). "
+            "Введите более короткое имя:"
+        )
+        return BookingState.ENTERING_NAME
+
     context.user_data["name"] = name
 
     keyboard = InlineKeyboardMarkup(
