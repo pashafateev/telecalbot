@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.config import settings
+from app.handlers.help import help_command
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.info(f"Admin user {chat_id} auto-whitelisted")
 
     if whitelist_service.is_whitelisted(chat_id):
-        # Whitelisted user - show main menu
+        # Whitelisted user - show welcome + help menu
         await update.message.reply_text(
             f"Добро пожаловать, {user.first_name}! Я помогу вам записаться на встречу."
         )
+        await help_command(update, context)
     else:
         # Not whitelisted - create access request and notify admin
         is_new = whitelist_service.create_access_request(
