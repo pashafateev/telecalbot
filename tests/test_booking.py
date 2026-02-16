@@ -1,20 +1,24 @@
 """Tests for the booking conversation handler."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram.error import BadRequest
+from telegram.ext import ConversationHandler
 
 from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
     BookingState,
     _format_duration,
+    booking_timeout,
     book_command,
     build_availability_keyboard,
     build_timezone_keyboard,
     cancel,
     change_timezone,
     confirm_booking,
+    create_booking_handler,
     email_decision,
     enter_email,
     enter_name,
@@ -787,8 +791,6 @@ class TestConfirmBooking:
 class TestCancel:
     @pytest.mark.asyncio
     async def test_cancel_via_callback(self, mock_update_with_query, mock_context):
-        from telegram.ext import ConversationHandler
-
         mock_update_with_query.callback_query.data = "cancel"
         mock_context.user_data = {"name": "Alice", "timezone": "Europe/Moscow"}
 
@@ -799,8 +801,6 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_via_command(self, mock_update, mock_context):
-        from telegram.ext import ConversationHandler
-
         mock_update.callback_query = None
         mock_context.user_data = {"name": "Alice"}
 
@@ -833,6 +833,61 @@ class TestCancel:
         mock_update_with_query.callback_query.message.reply_text.assert_called_once()
         msg = mock_update_with_query.callback_query.message.reply_text.call_args[0][0]
         assert "отменена" in msg.lower()
+
+
+class TestBookingTimeout:
+    @pytest.mark.asyncio
+    async def test_timeout_via_callback_clears_data_and_ends(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_context.user_data = {"name": "Alice", "timezone": "Europe/Moscow"}
+
+        result = await booking_timeout(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        assert mock_context.user_data == {}
+        mock_update_with_query.callback_query.answer.assert_not_called()
+        mock_update_with_query.callback_query.edit_message_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_timeout_via_message_replies_and_ends(self, mock_update, mock_context):
+        mock_context.user_data = {"name": "Alice"}
+
+        result = await booking_timeout(mock_update, mock_context)
+
+        assert result == ConversationHandler.END
+        assert mock_context.user_data == {}
+        mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_timeout_clears_data_even_when_callback_edit_fails(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_context.user_data = {"name": "Alice", "timezone": "Europe/Moscow"}
+        mock_update_with_query.callback_query.edit_message_text.side_effect = BadRequest(
+            "query is too old and response timeout expired or query id is invalid"
+        )
+
+        with pytest.raises(BadRequest):
+            await booking_timeout(mock_update_with_query, mock_context)
+
+        assert mock_context.user_data == {}
+
+
+class TestCreateBookingHandler:
+    def test_sets_conversation_timeout_from_config(self):
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            handler = create_booking_handler()
+
+        assert handler.conversation_timeout == timedelta(seconds=900)
+
+    def test_registers_timeout_state_handler(self):
+        handler = create_booking_handler()
+
+        assert ConversationHandler.TIMEOUT in handler.states
+        timeout_handlers = handler.states[ConversationHandler.TIMEOUT]
+        assert len(timeout_handlers) == 1
 
 
 class TestLoadMoreDates:

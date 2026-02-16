@@ -12,6 +12,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -447,6 +448,29 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """End stale booking conversation and ask user to restart."""
+    logger.info(
+        "Booking conversation timed out for user_id=%s",
+        update.effective_user.id if update.effective_user else "unknown",
+    )
+
+    query = update.callback_query
+    timeout_text = (
+        "Сессия записи истекла из-за неактивности.\n"
+        "Пожалуйста, начните заново командой /book."
+    )
+    try:
+        if query:
+            await _safe_edit_message_text(query, timeout_text)
+        elif update.message:
+            await update.message.reply_text(timeout_text)
+    finally:
+        context.user_data.clear()
+
+    return ConversationHandler.END
+
+
 # ---------------------------------------------------------------------------
 # Keyboard builders
 # ---------------------------------------------------------------------------
@@ -595,6 +619,10 @@ def create_booking_handler() -> ConversationHandler:
                 CallbackQueryHandler(select_timezone, pattern="^tz:"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
+            ConversationHandler.TIMEOUT: [TypeHandler(Update, booking_timeout)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=timedelta(
+            seconds=settings.booking_conversation_timeout_seconds
+        ),
     )

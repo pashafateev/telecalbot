@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # Application Settings
     log_level: str = "INFO"
+    booking_conversation_timeout_seconds: int = 900
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
