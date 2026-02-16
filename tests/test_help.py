@@ -47,7 +47,7 @@ class TestHelpCommand:
     async def test_whitelisted_user_sees_available_commands(
         self, mock_update, mock_context, whitelist_service
     ):
-        """Whitelisted user sees /book and /help commands."""
+        """Whitelisted user sees booking command set."""
         whitelist_service.add_to_whitelist(
             telegram_id=12345,
             display_name="Test",
@@ -59,6 +59,7 @@ class TestHelpCommand:
 
         response = mock_update.message.reply_text.call_args[0][0]
         assert "/book" in response
+        assert "/cancel_booking" in response
         assert "/help" in response
 
     @pytest.mark.asyncio

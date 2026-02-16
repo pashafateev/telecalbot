@@ -25,6 +25,7 @@ def test_schema_initialization(temp_db_path):
     assert "whitelist" in table_names
     assert "access_requests" in table_names
     assert "user_preferences" in table_names
+    assert "bookings" in table_names
 
 
 def test_whitelist_insert_and_query(temp_db_path):

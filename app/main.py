@@ -10,12 +10,14 @@ from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
     create_booking_handler,
+    create_cancel_booking_handlers,
     help_command,
     pending_command,
     reject_command,
     start_command,
     text_onboarding_or_help,
 )
+from app.services.booking_service import BookingService
 from app.services.calcom_client import CalComClient
 from app.services.whitelist import WhitelistService
 
@@ -47,6 +49,7 @@ def main() -> None:
 
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
+    application.bot_data["booking_service"] = BookingService(db)
     application.bot_data["calcom_client"] = CalComClient(
         api_key=settings.calcom_api_key,
         api_version=settings.cal_api_version,
@@ -59,6 +62,8 @@ def main() -> None:
     application.add_handler(CommandHandler("pending", pending_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(create_booking_handler())
+    for handler in create_cancel_booking_handlers():
+        application.add_handler(handler)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
     )

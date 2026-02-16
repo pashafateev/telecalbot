@@ -31,6 +31,24 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     timezone TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Persisted bookings for /cancel_booking flow
+CREATE TABLE IF NOT EXISTS bookings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id INTEGER NOT NULL,
+    calcom_booking_id INTEGER NOT NULL,
+    calcom_booking_uid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    start TEXT NOT NULL,
+    "end" TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled')),
+    created_at TEXT NOT NULL,
+    cancelled_at TEXT,
+    UNIQUE(telegram_id, calcom_booking_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_user_status_start
+ON bookings(telegram_id, status, start);
 """
 
 
