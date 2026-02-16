@@ -28,8 +28,8 @@ class BookingService:
                 calcom_booking_id,
                 calcom_booking_uid,
                 title,
-                start,
-                "end",
+                start_at,
+                end_at,
                 status,
                 created_at,
                 cancelled_at
@@ -38,8 +38,8 @@ class BookingService:
             ON CONFLICT(telegram_id, calcom_booking_id) DO UPDATE SET
                 calcom_booking_uid = excluded.calcom_booking_uid,
                 title = excluded.title,
-                start = excluded.start,
-                "end" = excluded."end",
+                start_at = excluded.start_at,
+                end_at = excluded.end_at,
                 status = 'active',
                 cancelled_at = NULL
             """,
@@ -71,7 +71,7 @@ class BookingService:
             SELECT *
             FROM bookings
             WHERE telegram_id = ? AND status = 'active'
-            ORDER BY start
+            ORDER BY start_at
             """,
             (telegram_id,),
         )
@@ -113,8 +113,8 @@ class BookingService:
             calcom_booking_id=row["calcom_booking_id"],
             calcom_booking_uid=row["calcom_booking_uid"],
             title=row["title"],
-            start=_parse_iso_datetime(row["start"]),
-            end=_parse_iso_datetime(row["end"]),
+            start=_parse_iso_datetime(row["start_at"]),
+            end=_parse_iso_datetime(row["end_at"]),
             status=row["status"],
             created_at=_parse_iso_datetime(row["created_at"]),
             cancelled_at=_parse_iso_datetime(row["cancelled_at"])

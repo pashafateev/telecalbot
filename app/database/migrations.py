@@ -39,16 +39,14 @@ CREATE TABLE IF NOT EXISTS bookings (
     calcom_booking_id INTEGER NOT NULL,
     calcom_booking_uid TEXT NOT NULL,
     title TEXT NOT NULL,
-    start TEXT NOT NULL,
-    "end" TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled')),
     created_at TEXT NOT NULL,
     cancelled_at TEXT,
     UNIQUE(telegram_id, calcom_booking_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_bookings_user_status_start
-ON bookings(telegram_id, status, start);
 """
 
 
@@ -64,6 +62,58 @@ def initialize_schema(db: Database) -> None:
 
 def run_migrations(db: Database) -> None:
     """Run any pending database migrations."""
-    # For now, just initialize schema
-    # Future migrations can be added here with version tracking
     initialize_schema(db)
+    _migrate_bookings_time_columns(db)
+    _ensure_bookings_indexes(db)
+
+
+def _migrate_bookings_time_columns(db: Database) -> None:
+    """Backfill renamed bookings time columns for existing databases."""
+    table_exists = db.execute_one(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bookings'"
+    )
+    if table_exists is None:
+        return
+
+    columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(bookings)")
+    }
+    has_old = "start" in columns and "end" in columns
+    has_new = "start_at" in columns and "end_at" in columns
+
+    if has_new:
+        return
+    if not has_old:
+        return
+
+    logger.info("Migrating bookings table columns start/end -> start_at/end_at")
+    db.execute_write("ALTER TABLE bookings ADD COLUMN start_at TEXT")
+    db.execute_write("ALTER TABLE bookings ADD COLUMN end_at TEXT")
+    db.execute_write(
+        """
+        UPDATE bookings
+        SET start_at = start, end_at = "end"
+        WHERE start_at IS NULL OR end_at IS NULL
+        """
+    )
+
+
+def _ensure_bookings_indexes(db: Database) -> None:
+    """Ensure bookings indexes are aligned with current schema."""
+    table_exists = db.execute_one(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bookings'"
+    )
+    if table_exists is None:
+        return
+
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(bookings)")}
+    if "start_at" not in columns:
+        return
+
+    db.execute_write("DROP INDEX IF EXISTS idx_bookings_user_status_start")
+    db.execute_write(
+        """
+        CREATE INDEX IF NOT EXISTS idx_bookings_user_status_start
+        ON bookings(telegram_id, status, start_at)
+        """
+    )
