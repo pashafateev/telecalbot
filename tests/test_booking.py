@@ -297,51 +297,79 @@ class TestSelectTimezone:
         mock_calcom_client.get_availability.return_value = availability_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await select_timezone(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["timezone"] == "Europe/Moscow"
 
     @pytest.mark.asyncio
-    async def test_returns_viewing_availability(
+    async def test_returns_selecting_duration_when_no_limit(
         self, mock_update_with_query, mock_context, mock_calcom_client, availability_response
     ):
+        """Without a duration limit, timezone selection should go to duration picker."""
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_context.bot_data = {"calcom_client": mock_calcom_client}
+
+        result = await select_timezone(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+
+    @pytest.mark.asyncio
+    async def test_returns_viewing_availability_when_limited(
+        self, mock_update_with_query, mock_context, mock_calcom_client, availability_response
+    ):
+        """With a duration limit, timezone selection should skip to availability."""
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
         mock_calcom_client.get_availability.return_value = availability_response
 
+        mock_duration_service = MagicMock()
+        mock_duration_service.get_limit.return_value = 30
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom_client,
+            "duration_limit_service": mock_duration_service,
+        }
+
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await select_timezone(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
 
     @pytest.mark.asyncio
-    async def test_shows_loading_then_availability(
+    async def test_shows_duration_picker(
         self, mock_update_with_query, mock_context, mock_calcom_client, availability_response
     ):
+        """Should show duration selection keyboard when no limit set."""
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
-        mock_calcom_client.get_availability.return_value = availability_response
+        mock_context.bot_data = {"calcom_client": mock_calcom_client}
 
-        with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
-            await select_timezone(mock_update_with_query, mock_context)
+        await select_timezone(mock_update_with_query, mock_context)
 
-        # edit_message_text called twice: loading + availability
-        assert mock_update_with_query.callback_query.edit_message_text.call_count == 2
+        # edit_message_text called once with duration picker
+        mock_update_with_query.callback_query.edit_message_text.assert_called_once()
+        call_text = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "длительность" in call_text.lower()
 
     @pytest.mark.asyncio
     async def test_handles_api_error_gracefully(
         self, mock_update_with_query, mock_context, mock_calcom_client
     ):
+        """With a duration limit, API errors during availability fetch are handled."""
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
         mock_calcom_client.get_availability.side_effect = CalComAPIError(500, "Server error")
 
+        mock_duration_service = MagicMock()
+        mock_duration_service.get_limit.return_value = 30
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom_client,
+            "duration_limit_service": mock_duration_service,
+        }
+
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await select_timezone(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
-        # Error message shown
         last_call = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "извините" in last_call.lower() or "не удалось" in last_call.lower()
 
@@ -574,6 +602,7 @@ class TestConfirmBooking:
             "selected_date": "2026-01-06",
             "selected_time": "2026-01-06T10:00:00.000+03:00",
             "timezone": "Europe/Moscow",
+            "duration": 30,
         }
 
     @pytest.fixture
@@ -601,7 +630,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         mock_calcom_client.create_booking.assert_called_once()
@@ -628,7 +657,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await confirm_booking(mock_update_with_query, mock_context)
 
         assert result == ConversationHandler.END
@@ -647,7 +676,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
@@ -673,7 +702,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         request = mock_calcom_client.create_booking.call_args[0][0]
@@ -693,7 +722,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.side_effect = CalComAPIError(409, "Conflict")
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await confirm_booking(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
@@ -713,7 +742,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.side_effect = CalComAPIError(500, "Server error")
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await confirm_booking(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
@@ -739,7 +768,7 @@ class TestConfirmBooking:
         )
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
@@ -759,7 +788,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
@@ -779,7 +808,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.return_value = booking_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             await confirm_booking(mock_update_with_query, mock_context)
 
         final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
@@ -900,7 +929,7 @@ class TestLoadMoreDates:
         mock_calcom_client.get_availability.return_value = availability_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.calcom_event_type_id = 42
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await load_more_dates(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["offset_days"] == 5
