@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     timezone TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Duration limits per user (admin-managed)
+CREATE TABLE IF NOT EXISTS duration_limits (
+    telegram_id INTEGER PRIMARY KEY,
+    max_duration_minutes INTEGER NOT NULL,
+    set_at TEXT NOT NULL,
+    set_by INTEGER NOT NULL
+);
 """
 
 
@@ -46,6 +54,4 @@ def initialize_schema(db: Database) -> None:
 
 def run_migrations(db: Database) -> None:
     """Run any pending database migrations."""
-    # For now, just initialize schema
-    # Future migrations can be added here with version tracking
     initialize_schema(db)

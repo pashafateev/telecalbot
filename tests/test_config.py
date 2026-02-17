@@ -30,6 +30,45 @@ def test_config_defaults():
     assert settings.booking_conversation_timeout_seconds == 900
 
 
+def test_get_event_type_id_with_duration_specific():
+    """Test get_event_type_id returns duration-specific IDs."""
+    from app.config import Settings
+
+    settings = Settings(
+        calcom_event_type_id=1,
+        calcom_event_type_id_30=30,
+        calcom_event_type_id_60=60,
+    )
+    assert settings.get_event_type_id(30) == 30
+    assert settings.get_event_type_id(60) == 60
+
+
+def test_get_event_type_id_fallback():
+    """Test get_event_type_id falls back to calcom_event_type_id."""
+    from app.config import Settings
+
+    settings = Settings(calcom_event_type_id=99)
+    assert settings.get_event_type_id(30) == 99
+    assert settings.get_event_type_id(60) == 99
+
+
+def test_get_event_type_id_unknown_duration():
+    """Test get_event_type_id with unknown duration falls back."""
+    from app.config import Settings
+
+    settings = Settings(calcom_event_type_id=42)
+    assert settings.get_event_type_id(15) == 42
+
+
+def test_get_event_type_id_raises_when_none():
+    """Test get_event_type_id raises ValueError when no ID configured."""
+    from app.config import Settings
+
+    settings = Settings()
+    with pytest.raises(ValueError, match="No event type ID configured"):
+        settings.get_event_type_id(30)
+
+
 def test_config_required_fields():
     """Test that missing required fields raise validation error."""
     # Temporarily unset required environment variables
