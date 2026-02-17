@@ -4,7 +4,7 @@
 #
 
 app = "telecalbot"
-primary_region = 'iad'
+primary_region = 'fra'
 
 [env]
 DATABASE_PATH = "/data/telecalbot.db"
