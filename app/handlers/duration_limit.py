@@ -13,21 +13,6 @@ logger = logging.getLogger(__name__)
 VALID_DURATIONS = (30, 60)
 
 
-def _parse_target_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
-    """Parse target telegram_id from args or reply."""
-    # If replying to a message, use that user's ID
-    if update.message.reply_to_message and update.message.reply_to_message.from_user:
-        return update.message.reply_to_message.from_user.id
-
-    if not context.args:
-        return None
-
-    try:
-        return int(context.args[0])
-    except ValueError:
-        return None
-
-
 @admin_only
 async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """

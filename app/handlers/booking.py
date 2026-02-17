@@ -150,7 +150,14 @@ async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
 
-    duration = int(query.data.split(":", 1)[1])
+    try:
+        duration = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return BookingState.SELECTING_DURATION
+
+    if duration not in DURATION_OPTIONS:
+        return BookingState.SELECTING_DURATION
+
     context.user_data["duration"] = duration
 
     return await _show_availability(query, context, offset_days=0)

@@ -79,6 +79,29 @@ class TestDurationSelection:
         assert result == BookingState.VIEWING_AVAILABILITY
 
 
+class TestSelectDurationValidation:
+    """Tests for invalid callback data in duration selection."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_duration(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "duration:999"
+        result = await select_duration(mock_update_with_query, mock_context)
+        assert result == BookingState.SELECTING_DURATION
+        assert "duration" not in mock_context.user_data
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_numeric_duration(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "duration:abc"
+        result = await select_duration(mock_update_with_query, mock_context)
+        assert result == BookingState.SELECTING_DURATION
+
+    @pytest.mark.asyncio
+    async def test_rejects_malformed_data(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "duration:"
+        result = await select_duration(mock_update_with_query, mock_context)
+        assert result == BookingState.SELECTING_DURATION
+
+
 class TestDurationLimitAutoSelect:
     """Tests for auto-selection when user has a duration limit."""
 

@@ -55,16 +55,3 @@ def initialize_schema(db: Database) -> None:
 def run_migrations(db: Database) -> None:
     """Run any pending database migrations."""
     initialize_schema(db)
-
-    # Migration: add duration_limits table if it doesn't exist (for existing DBs)
-    with db.get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS duration_limits (
-                telegram_id INTEGER PRIMARY KEY,
-                max_duration_minutes INTEGER NOT NULL,
-                set_at TEXT NOT NULL,
-                set_by INTEGER NOT NULL
-            )
-            """
-        )

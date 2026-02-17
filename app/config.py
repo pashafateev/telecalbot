@@ -31,13 +31,25 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
-    def get_event_type_id(self, duration_minutes: int) -> int | None:
-        """Get the event type ID for a given duration, with fallback."""
+    def get_event_type_id(self, duration_minutes: int) -> int:
+        """Get the event type ID for a given duration, with fallback.
+
+        Raises:
+            ValueError: If no event type ID is configured for the given duration.
+        """
         if duration_minutes == 30:
-            return self.calcom_event_type_id_30 or self.calcom_event_type_id
+            result = self.calcom_event_type_id_30 or self.calcom_event_type_id
         elif duration_minutes == 60:
-            return self.calcom_event_type_id_60 or self.calcom_event_type_id
-        return self.calcom_event_type_id
+            result = self.calcom_event_type_id_60 or self.calcom_event_type_id
+        else:
+            result = self.calcom_event_type_id
+
+        if result is None:
+            raise ValueError(
+                f"No event type ID configured for {duration_minutes}-minute duration. "
+                "Set CALCOM_EVENT_TYPE_ID or duration-specific IDs in config."
+            )
+        return result
 
 
 # Global settings instance

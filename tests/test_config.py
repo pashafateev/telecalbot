@@ -60,6 +60,15 @@ def test_get_event_type_id_unknown_duration():
     assert settings.get_event_type_id(15) == 42
 
 
+def test_get_event_type_id_raises_when_none():
+    """Test get_event_type_id raises ValueError when no ID configured."""
+    from app.config import Settings
+
+    settings = Settings()
+    with pytest.raises(ValueError, match="No event type ID configured"):
+        settings.get_event_type_id(30)
+
+
 def test_config_required_fields():
     """Test that missing required fields raise validation error."""
     # Temporarily unset required environment variables
