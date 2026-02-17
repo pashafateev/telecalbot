@@ -4,6 +4,7 @@ import logging
 import sys
 
 from telegram.error import NetworkError
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -92,6 +93,15 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
     )
     application.add_error_handler(error_handler)
+
+    # Register command menu for Telegram's UI button
+    async def post_init(app: Application) -> None:
+        await app.bot.set_my_commands([
+            BotCommand("book", "Записаться на встречу"),
+            BotCommand("help", "Показать список команд"),
+        ])
+
+    application.post_init = post_init
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
