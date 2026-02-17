@@ -23,7 +23,13 @@ from app.handlers import (
     start_command,
     text_onboarding_or_help,
 )
+from app.handlers.duration_limit import (
+    limits_command,
+    removelimit_command,
+    setlimit_command,
+)
 from app.services.calcom_client import CalComClient
+from app.services.duration_limit import DurationLimitService
 from app.services.whitelist import WhitelistService
 
 
@@ -66,6 +72,7 @@ def main() -> None:
 
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
+    application.bot_data["duration_limit_service"] = DurationLimitService(db)
     application.bot_data["calcom_client"] = CalComClient(
         api_key=settings.calcom_api_key,
         api_version=settings.cal_api_version,
@@ -77,6 +84,9 @@ def main() -> None:
     application.add_handler(CommandHandler("reject", reject_command))
     application.add_handler(CommandHandler("pending", pending_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("setlimit", setlimit_command))
+    application.add_handler(CommandHandler("removelimit", removelimit_command))
+    application.add_handler(CommandHandler("limits", limits_command))
     application.add_handler(create_booking_handler())
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
