@@ -94,12 +94,30 @@ def main() -> None:
     )
     application.add_error_handler(error_handler)
 
-    # Register command menu for Telegram's UI button
+    # Register command menus for Telegram's UI button
     async def post_init(app: Application) -> None:
+        from telegram import BotCommandScopeChat
+
+        # Default commands for all users
         await app.bot.set_my_commands([
             BotCommand("book", "Записаться на встречу"),
             BotCommand("help", "Показать список команд"),
         ])
+
+        # Admin gets additional commands
+        await app.bot.set_my_commands(
+            [
+                BotCommand("book", "Записаться на встречу"),
+                BotCommand("help", "Показать список команд"),
+                BotCommand("pending", "Список ожидающих запросов"),
+                BotCommand("setlimit", "Установить лимит длительности"),
+                BotCommand("removelimit", "Удалить лимит длительности"),
+                BotCommand("limits", "Показать все лимиты"),
+                BotCommand("approve", "Одобрить запрос на доступ"),
+                BotCommand("reject", "Отклонить запрос на доступ"),
+            ],
+            scope=BotCommandScopeChat(chat_id=settings.admin_telegram_id),
+        )
 
     application.post_init = post_init
 
