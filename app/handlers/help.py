@@ -30,9 +30,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ]
 
     if user_id == settings.admin_telegram_id:
-        lines.append("\nAdmin commands:\n")
-        lines.append("/approve <id> — Approve access request")
-        lines.append("/reject <id> — Reject access request")
-        lines.append("/pending — List pending access requests")
+        lines.append("\nКоманды администратора:\n")
+        lines.append("/approve <id> — Одобрить запрос на доступ")
+        lines.append("/reject <id> — Отклонить запрос на доступ")
+        lines.append("/pending — Список ожидающих запросов")
+        lines.append("/setlimit <id> <мин> — Установить лимит длительности")
+        lines.append("/removelimit <id> — Удалить лимит длительности")
+        lines.append("/limits — Показать все лимиты")
 
     await update.message.reply_text("\n".join(lines))
