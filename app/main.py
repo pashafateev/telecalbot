@@ -100,6 +100,7 @@ def main() -> None:
 
         # Default commands for all users
         await app.bot.set_my_commands([
+            BotCommand("start", "Начать работу с ботом"),
             BotCommand("book", "Записаться на встречу"),
             BotCommand("help", "Показать список команд"),
         ])
@@ -107,6 +108,7 @@ def main() -> None:
         # Admin gets additional commands
         await app.bot.set_my_commands(
             [
+                BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
                 BotCommand("help", "Показать список команд"),
                 BotCommand("pending", "Список ожидающих запросов"),
