@@ -300,11 +300,19 @@ class TestBookCommand:
 
     @pytest.mark.asyncio
     async def test_returns_selecting_timezone(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
         result = await book_command(mock_update, mock_context)
         assert result == BookingState.SELECTING_TIMEZONE
 
     @pytest.mark.asyncio
     async def test_sends_timezone_keyboard(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
         await book_command(mock_update, mock_context)
         mock_update.message.reply_text.assert_called_once()
         call_kwargs = mock_update.message.reply_text.call_args[1]
