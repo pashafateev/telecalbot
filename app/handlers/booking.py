@@ -26,6 +26,7 @@ from app.services.calcom_client import (
     CalComAPIError,
     CalComClient,
 )
+from app.services.duration_limit import DurationLimitService
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,8 @@ RUSSIAN_MONTHS_ABBR = [
 
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
+
+DURATION_OPTIONS = {30: "30 минут", 60: "60 минут"}
 CANCEL_SELECT_PREFIX = "cancel_booking_select:"
 CANCEL_CONFIRM_PREFIX = "cancel_booking_confirm:"
 CANCEL_BACK_CALLBACK = "cancel_booking_back"
@@ -69,6 +72,7 @@ CANCEL_BOOKING_ACCESS_DENIED_TEXT = (
 
 class BookingState(IntEnum):
     SELECTING_TIMEZONE = auto()
+    SELECTING_DURATION = auto()
     VIEWING_AVAILABILITY = auto()
     SELECTING_SLOT = auto()
     ENTERING_NAME = auto()
@@ -93,6 +97,28 @@ async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
         raise
 
 
+async def _deny_booking_access(update: Update) -> None:
+    """Tell unapproved users they need approval before booking."""
+    text = (
+        "Доступ к записи доступен только одобренным пользователям.\n"
+        "Используйте /start, чтобы запросить доступ."
+    )
+    if update.message:
+        await update.message.reply_text(text)
+    elif update.callback_query:
+        await _safe_edit_message_text(update.callback_query, text)
+
+
+def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return access status. Missing whitelist service is treated as denied."""
+    whitelist_service: WhitelistService | None = context.bot_data.get("whitelist_service")
+    if whitelist_service is None:
+        logger.warning("whitelist_service missing in bot_data; denying booking access")
+        return False
+    user_id = update.effective_user.id
+    return whitelist_service.is_whitelisted(user_id)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -100,6 +126,10 @@ async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
 
 async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the booking conversation with timezone selection."""
+    if not _is_whitelisted(update, context):
+        await _deny_booking_access(update)
+        return ConversationHandler.END
+
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
         "Выберите ваш часовой пояс:",
@@ -114,13 +144,57 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle timezone selection and fetch availability."""
+    """Handle timezone selection and show duration options or fetch availability."""
     query = update.callback_query
     await query.answer()
 
     timezone_id = query.data.split(":", 1)[1]
     context.user_data["timezone"] = timezone_id
     context.user_data["offset_days"] = 0
+
+    return await _handle_duration_selection(query, context)
+
+
+async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Check duration limits and show duration picker or auto-select."""
+    user_id = query.from_user.id
+    duration_limit_service: DurationLimitService | None = context.bot_data.get(
+        "duration_limit_service"
+    )
+
+    max_duration = None
+    if duration_limit_service:
+        max_duration = duration_limit_service.get_limit(user_id)
+
+    if max_duration is not None:
+        # User has a limit — auto-select that duration, skip picker
+        context.user_data["duration"] = max_duration
+        return await _show_availability(query, context, offset_days=0)
+
+    # No limit — show duration selection
+    keyboard = build_duration_keyboard()
+    await _safe_edit_message_text(
+        query,
+        "Выберите длительность встречи:",
+        reply_markup=keyboard,
+    )
+    return BookingState.SELECTING_DURATION
+
+
+async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle duration selection and fetch availability."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        duration = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return BookingState.SELECTING_DURATION
+
+    if duration not in DURATION_OPTIONS:
+        return BookingState.SELECTING_DURATION
+
+    context.user_data["duration"] = duration
 
     return await _show_availability(query, context, offset_days=0)
 
@@ -152,11 +226,13 @@ async def _show_availability(
 
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     timezone_id = context.user_data["timezone"]
+    duration = context.user_data.get("duration", 30)
+    event_type_id = settings.get_event_type_id(duration)
     today = date.today()
 
     try:
         availability = await calcom_client.get_availability(
-            event_type_id=settings.calcom_event_type_id,
+            event_type_id=event_type_id,
             start_date=today + timedelta(days=offset_days),
             end_date=today + timedelta(days=offset_days + 14),
             timezone=timezone_id,
@@ -339,10 +415,13 @@ def _build_confirmation_text(data: dict) -> str:
         data["selected_time"],
         data["timezone"],
     )
+    duration = data.get("duration", 30)
+    duration_text = DURATION_OPTIONS.get(duration, f"{duration} мин.")
     email_line = f"\nEmail: {data['email']}" if data.get("email") else ""
     return (
         f"Подтвердите запись:\n\n"
         f"Время: {formatted_time}\n"
+        f"Длительность: {duration_text}\n"
         f"Имя: {data['name']}"
         f"{email_line}\n\n"
         f"Нажмите «Подтвердить запись» для продолжения."
@@ -367,6 +446,10 @@ def _confirmation_keyboard() -> InlineKeyboardMarkup:
 
 async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Create the booking via Cal.com API."""
+    if not _is_whitelisted(update, context):
+        await _deny_booking_access(update)
+        return ConversationHandler.END
+
     query = update.callback_query
     await query.answer()
 
@@ -375,13 +458,15 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = context.user_data
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     email = data.get("email") or f"telegram-{update.effective_user.id}@telecalbot.local"
+    duration = data.get("duration", 30)
+    event_type_id = settings.get_event_type_id(duration)
 
     try:
         start_utc = slot_to_utc(data["selected_time"])
 
         booking = await calcom_client.create_booking(
             BookingRequest(
-                eventTypeId=settings.calcom_event_type_id,
+                eventTypeId=event_type_id,
                 start=start_utc,
                 attendee=Attendee(
                     name=data["name"],
@@ -410,7 +495,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             data["selected_time"],
             data["timezone"],
         )
-        duration = _format_duration(booking)
+        duration_str = _format_duration(booking)
         email_note = (
             f"\nПисьмо с подтверждением отправлено на {email}."
             if data.get("email")
@@ -421,7 +506,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             query,
             f"Готово! Ваша встреча подтверждена.\n\n"
             f"Время: {formatted_time}\n"
-            f"Длительность: {duration}\n\n"
+            f"Длительность: {duration_str}\n\n"
             f"Мы свяжемся через Telegram в назначенное время."
             f"{email_note}"
         )
@@ -673,6 +758,16 @@ def build_timezone_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def build_duration_keyboard() -> InlineKeyboardMarkup:
+    """Build duration selection keyboard."""
+    buttons = [
+        [InlineKeyboardButton(label, callback_data=f"duration:{minutes}")]
+        for minutes, label in DURATION_OPTIONS.items()
+    ]
+    buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def build_availability_keyboard(
     slots: dict,
     offset_days: int = 0,
@@ -842,6 +937,10 @@ def create_booking_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(select_timezone, pattern="^tz:"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
+            BookingState.SELECTING_DURATION: [
+                CallbackQueryHandler(select_duration, pattern="^duration:"),
+                CallbackQueryHandler(cancel, pattern="^cancel$"),
+            ],
             BookingState.VIEWING_AVAILABILITY: [
                 CallbackQueryHandler(select_slot, pattern="^slot:"),
                 CallbackQueryHandler(load_more_dates, pattern="^dates:"),
@@ -872,3 +971,8 @@ def create_booking_conversation_handler() -> ConversationHandler:
             seconds=settings.booking_conversation_timeout_seconds
         ),
     )
+
+
+def create_booking_handler() -> ConversationHandler:
+    """Backward-compatible alias for booking handler factory."""
+    return create_booking_conversation_handler()

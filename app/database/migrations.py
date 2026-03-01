@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at TEXT NOT NULL
 );
 
+-- Duration limits per user (admin-managed)
+CREATE TABLE IF NOT EXISTS duration_limits (
+    telegram_id INTEGER PRIMARY KEY,
+    max_duration_minutes INTEGER NOT NULL,
+    set_at TEXT NOT NULL,
+    set_by INTEGER NOT NULL
+);
+
 -- Persisted bookings for /cancel_booking flow
 CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +54,6 @@ CREATE TABLE IF NOT EXISTS bookings (
     cancelled_at TEXT,
     UNIQUE(telegram_id, calcom_booking_id)
 );
-
 """
 
 
@@ -75,9 +82,7 @@ def _migrate_bookings_time_columns(db: Database) -> None:
     if table_exists is None:
         return
 
-    columns = {
-        row["name"] for row in db.execute("PRAGMA table_info(bookings)")
-    }
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(bookings)")}
     has_old = "start" in columns and "end" in columns
     has_new = "start_at" in columns and "end_at" in columns
 
