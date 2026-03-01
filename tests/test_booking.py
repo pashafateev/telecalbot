@@ -276,12 +276,43 @@ class TestBuildAvailabilityKeyboard:
 
 class TestBookCommand:
     @pytest.mark.asyncio
+    async def test_blocks_non_whitelisted_user(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = False
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_update.message.reply_text.assert_called_once()
+        assert mock_update.message.reply_text.call_args[1].get("reply_markup") is None
+
+    @pytest.mark.asyncio
+    async def test_allows_whitelisted_user(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        assert "reply_markup" in mock_update.message.reply_text.call_args[1]
+
+    @pytest.mark.asyncio
     async def test_returns_selecting_timezone(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
         result = await book_command(mock_update, mock_context)
         assert result == BookingState.SELECTING_TIMEZONE
 
     @pytest.mark.asyncio
     async def test_sends_timezone_keyboard(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
         await book_command(mock_update, mock_context)
         mock_update.message.reply_text.assert_called_once()
         call_kwargs = mock_update.message.reply_text.call_args[1]
@@ -594,6 +625,12 @@ class TestEnterEmail:
 
 
 class TestConfirmBooking:
+    @pytest.fixture(autouse=True)
+    def allow_whitelisted_user(self, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
     @pytest.fixture
     def user_data_ready(self):
         return {
@@ -615,6 +652,42 @@ class TestConfirmBooking:
             end="2026-01-06T08:00:00Z",
             status="accepted",
         )
+
+    @pytest.mark.asyncio
+    async def test_blocks_non_whitelisted_user_and_does_not_create_booking(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+    ):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = False
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+        mock_context.user_data = user_data_ready
+
+        result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_calcom_client.create_booking.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_blocks_booking_when_whitelist_service_missing(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        caplog,
+    ):
+        mock_context.bot_data.pop("whitelist_service", None)
+        mock_context.user_data = user_data_ready
+
+        result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_calcom_client.create_booking.assert_not_called()
+        assert "whitelist_service missing in bot_data" in caplog.text
 
     @pytest.mark.asyncio
     async def test_creates_booking_with_correct_data(
