@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from app.config import settings
 from app.constants import RUSSIAN_TIMEZONES
+from app.services.booking_service import BookingService
 from app.services.calcom_client import (
     Attendee,
     BookingRequest,
@@ -25,7 +26,6 @@ from app.services.calcom_client import (
     CalComAPIError,
     CalComClient,
 )
-from app.services.booking_service import BookingService
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,11 @@ MAX_NAME_LENGTH = 100
 CANCEL_SELECT_PREFIX = "cancel_booking_select:"
 CANCEL_CONFIRM_PREFIX = "cancel_booking_confirm:"
 CANCEL_BACK_CALLBACK = "cancel_booking_back"
+CANCEL_BOOKING_TERMINAL_STATUS_CODES = {404, 409}
+CANCEL_BOOKING_ACCESS_DENIED_TEXT = (
+    "Эта команда доступна только одобренным пользователям.\n"
+    "Используйте /start для запроса доступа."
+)
 
 
 class BookingState(IntEnum):
@@ -493,15 +498,11 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show user bookings and let them choose one for cancellation."""
-    whitelist_service: WhitelistService = context.bot_data["whitelist_service"]
     booking_service: BookingService = context.bot_data["booking_service"]
     user_id = update.effective_user.id
 
-    if not whitelist_service.is_whitelisted(user_id):
-        await update.message.reply_text(
-            "Эта команда доступна только одобренным пользователям.\n"
-            "Используйте /start для запроса доступа."
-        )
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
         return
 
     bookings = booking_service.list_upcoming_bookings(user_id)
@@ -520,8 +521,12 @@ async def cancel_booking_select(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    booking_service: BookingService = context.bot_data["booking_service"]
     user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    booking_service: BookingService = context.bot_data["booking_service"]
     booking_row_id = _parse_booking_row_id(query.data, CANCEL_SELECT_PREFIX)
     if booking_row_id is None:
         await _safe_edit_message_text(query, "Некорректный выбор записи.")
@@ -562,9 +567,13 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
     booking_service: BookingService = context.bot_data["booking_service"]
     calcom_client: CalComClient = context.bot_data["calcom_client"]
-    user_id = update.effective_user.id
     booking_row_id = _parse_booking_row_id(query.data, CANCEL_CONFIRM_PREFIX)
     if booking_row_id is None:
         await _safe_edit_message_text(query, "Некорректный выбор записи.")
@@ -579,7 +588,18 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         await calcom_client.cancel_booking(booking.calcom_booking_id)
-    except CalComAPIError:
+    except CalComAPIError as error:
+        if error.status_code in CANCEL_BOOKING_TERMINAL_STATUS_CODES:
+            booking_service.mark_cancelled(booking_row_id, user_id)
+            await _safe_edit_message_text(
+                query,
+                (
+                    "Запись уже была отменена.\n\n"
+                    f"{_format_stored_booking_summary(booking)}"
+                ),
+            )
+            return
+
         await _safe_edit_message_text(
             query,
             "Не удалось отменить запись. Попробуйте позже.",
@@ -601,8 +621,12 @@ async def cancel_booking_back(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
-    booking_service: BookingService = context.bot_data["booking_service"]
     user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    booking_service: BookingService = context.bot_data["booking_service"]
     bookings = booking_service.list_upcoming_bookings(user_id)
     if not bookings:
         await _safe_edit_message_text(query, "У вас нет предстоящих записей для отмены.")
@@ -766,6 +790,27 @@ def _parse_booking_row_id(callback_data: str, prefix: str) -> int | None:
         return int(callback_data[len(prefix):])
     except ValueError:
         return None
+
+
+def _user_can_use_cancel_booking_flow(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> bool:
+    whitelist_service: WhitelistService | None = context.bot_data.get("whitelist_service")
+    if whitelist_service is None:
+        logger.error("Whitelist service is missing in bot_data; denying cancel booking flow")
+        return False
+    return whitelist_service.is_whitelisted(user_id)
+
+
+async def _deny_cancel_booking_flow_access(update: Update) -> None:
+    query = update.callback_query
+    if query:
+        await _safe_edit_message_text(query, CANCEL_BOOKING_ACCESS_DENIED_TEXT)
+        return
+
+    if update.message:
+        await update.message.reply_text(CANCEL_BOOKING_ACCESS_DENIED_TEXT)
 
 
 def _format_stored_booking_button_text(booking) -> str:

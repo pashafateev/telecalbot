@@ -11,16 +11,16 @@ from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
     BookingState,
     _format_duration,
-    booking_timeout,
     book_command,
-    cancel_booking_back,
-    cancel_booking_command,
-    cancel_booking_confirm,
-    cancel_booking_select,
+    booking_timeout,
     build_availability_keyboard,
     build_cancel_booking_keyboard,
     build_timezone_keyboard,
     cancel,
+    cancel_booking_back,
+    cancel_booking_command,
+    cancel_booking_confirm,
+    cancel_booking_select,
     change_timezone,
     confirm_booking,
     create_booking_conversation_handler,
@@ -960,6 +960,17 @@ class TestCancelBookingCallbacks:
         assert "Вы уверены" in call_text
 
     @pytest.mark.asyncio
+    async def test_select_denies_non_whitelisted_user(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel_booking_select:3"
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = False
+
+        await cancel_booking_select(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["booking_service"].get_booking_for_user.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_confirm_cancels_booking(self, mock_update_with_query, mock_context):
         mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
         booking = MagicMock()
@@ -974,6 +985,27 @@ class TestCancelBookingCallbacks:
         await cancel_booking_confirm(mock_update_with_query, mock_context)
 
         mock_context.bot_data["calcom_client"].cancel_booking.assert_awaited_once_with(99)
+        mock_context.bot_data["booking_service"].mark_cancelled.assert_called_once_with(3, 12345)
+
+    @pytest.mark.asyncio
+    async def test_confirm_marks_local_booking_cancelled_on_terminal_calcom_error(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
+        booking = MagicMock()
+        booking.id = 3
+        booking.status = "active"
+        booking.calcom_booking_id = 99
+        booking.title = "Step session"
+        booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
+        booking.end = datetime(2026, 1, 6, 8, 0, tzinfo=timezone.utc)
+        mock_context.bot_data["booking_service"].get_booking_for_user.return_value = booking
+        mock_context.bot_data["calcom_client"].cancel_booking.side_effect = CalComAPIError(
+            404, "not found"
+        )
+
+        await cancel_booking_confirm(mock_update_with_query, mock_context)
+
         mock_context.bot_data["booking_service"].mark_cancelled.assert_called_once_with(3, 12345)
 
     @pytest.mark.asyncio
@@ -997,6 +1029,30 @@ class TestCancelBookingCallbacks:
         assert "Не удалось отменить" in text
 
     @pytest.mark.asyncio
+    async def test_confirm_denies_non_whitelisted_user_and_skips_calcom(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = False
+
+        await cancel_booking_confirm(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["booking_service"].get_booking_for_user.assert_not_called()
+        mock_context.bot_data["calcom_client"].cancel_booking.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_confirm_denies_when_whitelist_service_missing(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "cancel_booking_confirm:3"
+        del mock_context.bot_data["whitelist_service"]
+
+        await cancel_booking_confirm(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["booking_service"].get_booking_for_user.assert_not_called()
+        mock_context.bot_data["calcom_client"].cancel_booking.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_back_shows_booking_list(self, mock_update_with_query, mock_context):
         mock_update_with_query.callback_query.data = "cancel_booking_back"
         booking = MagicMock()
@@ -1009,6 +1065,15 @@ class TestCancelBookingCallbacks:
 
         text = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "Выберите запись" in text
+
+    @pytest.mark.asyncio
+    async def test_back_denies_non_whitelisted_user(self, mock_update_with_query, mock_context):
+        mock_update_with_query.callback_query.data = "cancel_booking_back"
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = False
+
+        await cancel_booking_back(mock_update_with_query, mock_context)
+
+        mock_context.bot_data["booking_service"].list_upcoming_bookings.assert_not_called()
 
 
 class TestCancelBookingHandlerFactory:
