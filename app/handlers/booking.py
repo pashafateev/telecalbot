@@ -26,6 +26,7 @@ from app.services.calcom_client import (
     CalComClient,
 )
 from app.services.duration_limit import DurationLimitService
+from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,27 @@ async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
         raise
 
 
+async def _deny_booking_access(update: Update) -> None:
+    """Tell unapproved users they need approval before booking."""
+    text = (
+        "Доступ к записи доступен только одобренным пользователям.\n"
+        "Используйте /start, чтобы запросить доступ."
+    )
+    if update.message:
+        await update.message.reply_text(text)
+    elif update.callback_query:
+        await _safe_edit_message_text(update.callback_query, text)
+
+
+def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return access status. Missing whitelist service defaults to allow for test safety."""
+    whitelist_service: WhitelistService | None = context.bot_data.get("whitelist_service")
+    if whitelist_service is None:
+        return True
+    user_id = update.effective_user.id
+    return whitelist_service.is_whitelisted(user_id)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -94,6 +116,10 @@ async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
 
 async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the booking conversation with timezone selection."""
+    if not _is_whitelisted(update, context):
+        await _deny_booking_access(update)
+        return ConversationHandler.END
+
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
         "Выберите ваш часовой пояс:",
@@ -410,6 +436,10 @@ def _confirmation_keyboard() -> InlineKeyboardMarkup:
 
 async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Create the booking via Cal.com API."""
+    if not _is_whitelisted(update, context):
+        await _deny_booking_access(update)
+        return ConversationHandler.END
+
     query = update.callback_query
     await query.answer()
 

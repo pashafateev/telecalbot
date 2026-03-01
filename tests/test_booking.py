@@ -276,6 +276,29 @@ class TestBuildAvailabilityKeyboard:
 
 class TestBookCommand:
     @pytest.mark.asyncio
+    async def test_blocks_non_whitelisted_user(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = False
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_update.message.reply_text.assert_called_once()
+        assert mock_update.message.reply_text.call_args[1].get("reply_markup") is None
+
+    @pytest.mark.asyncio
+    async def test_allows_whitelisted_user(self, mock_update, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        assert "reply_markup" in mock_update.message.reply_text.call_args[1]
+
+    @pytest.mark.asyncio
     async def test_returns_selecting_timezone(self, mock_update, mock_context):
         result = await book_command(mock_update, mock_context)
         assert result == BookingState.SELECTING_TIMEZONE
