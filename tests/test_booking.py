@@ -617,6 +617,12 @@ class TestEnterEmail:
 
 
 class TestConfirmBooking:
+    @pytest.fixture(autouse=True)
+    def allow_whitelisted_user(self, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
     @pytest.fixture
     def user_data_ready(self):
         return {
@@ -638,6 +644,42 @@ class TestConfirmBooking:
             end="2026-01-06T08:00:00Z",
             status="accepted",
         )
+
+    @pytest.mark.asyncio
+    async def test_blocks_non_whitelisted_user_and_does_not_create_booking(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+    ):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = False
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+        mock_context.user_data = user_data_ready
+
+        result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_calcom_client.create_booking.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_blocks_booking_when_whitelist_service_missing(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        caplog,
+    ):
+        mock_context.bot_data.pop("whitelist_service", None)
+        mock_context.user_data = user_data_ready
+
+        result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_calcom_client.create_booking.assert_not_called()
+        assert "whitelist_service missing in bot_data" in caplog.text
 
     @pytest.mark.asyncio
     async def test_creates_booking_with_correct_data(

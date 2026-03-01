@@ -101,10 +101,11 @@ async def _deny_booking_access(update: Update) -> None:
 
 
 def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Return access status. Missing whitelist service defaults to allow for test safety."""
+    """Return access status. Missing whitelist service is treated as denied."""
     whitelist_service: WhitelistService | None = context.bot_data.get("whitelist_service")
     if whitelist_service is None:
-        return True
+        logger.warning("whitelist_service missing in bot_data; denying booking access")
+        return False
     user_id = update.effective_user.id
     return whitelist_service.is_whitelisted(user_id)
 
