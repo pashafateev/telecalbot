@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from app.config import settings
 from app.constants import RUSSIAN_TIMEZONES
+from app.services.booking_service import BookingService
 from app.services.calcom_client import (
     Attendee,
     BookingRequest,
@@ -59,6 +60,14 @@ TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
 
 DURATION_OPTIONS = {30: "30 минут", 60: "60 минут"}
+CANCEL_SELECT_PREFIX = "cancel_booking_select:"
+CANCEL_CONFIRM_PREFIX = "cancel_booking_confirm:"
+CANCEL_BACK_CALLBACK = "cancel_booking_back"
+CANCEL_BOOKING_TERMINAL_STATUS_CODES = {404, 409}
+CANCEL_BOOKING_ACCESS_DENIED_TEXT = (
+    "Эта команда доступна только одобренным пользователям.\n"
+    "Используйте /start для запроса доступа."
+)
 
 
 class BookingState(IntEnum):
@@ -470,6 +479,16 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 },
             )
         )
+        booking_service: BookingService | None = context.bot_data.get("booking_service")
+        if booking_service is not None:
+            try:
+                booking_service.save_booking(update.effective_user.id, booking)
+            except Exception:
+                logger.exception(
+                    "Failed to persist booking for user_id=%s booking_id=%s",
+                    update.effective_user.id,
+                    booking.id,
+                )
 
         formatted_time = _format_datetime_display(
             data["selected_date"],
@@ -558,6 +577,173 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ---------------------------------------------------------------------------
+# Cancel existing booking command
+# ---------------------------------------------------------------------------
+
+
+async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show user bookings and let them choose one for cancellation."""
+    booking_service: BookingService = context.bot_data["booking_service"]
+    user_id = update.effective_user.id
+
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    bookings = booking_service.list_upcoming_bookings(user_id)
+    if not bookings:
+        await update.message.reply_text("У вас нет предстоящих записей для отмены.")
+        return
+
+    await update.message.reply_text(
+        "Выберите запись для отмены:",
+        reply_markup=build_cancel_booking_keyboard(bookings),
+    )
+
+
+async def cancel_booking_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle booking selection and show confirmation prompt."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    booking_service: BookingService = context.bot_data["booking_service"]
+    booking_row_id = _parse_booking_row_id(query.data, CANCEL_SELECT_PREFIX)
+    if booking_row_id is None:
+        await _safe_edit_message_text(query, "Некорректный выбор записи.")
+        return
+
+    booking = booking_service.get_booking_for_user(booking_row_id, user_id)
+    if booking is None or booking.status != "active":
+        await _safe_edit_message_text(
+            query, "Эта запись не найдена или уже была отменена."
+        )
+        return
+
+    await _safe_edit_message_text(
+        query,
+        (
+            "Вы уверены, что хотите отменить запись?\n\n"
+            f"{_format_stored_booking_summary(booking)}"
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Да, отменить",
+                        callback_data=f"{CANCEL_CONFIRM_PREFIX}{booking.id}",
+                    ),
+                    InlineKeyboardButton(
+                        "Назад",
+                        callback_data=CANCEL_BACK_CALLBACK,
+                    ),
+                ]
+            ]
+        ),
+    )
+
+
+async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel selected booking in Cal.com and mark it cancelled locally."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    booking_service: BookingService = context.bot_data["booking_service"]
+    calcom_client: CalComClient = context.bot_data["calcom_client"]
+    booking_row_id = _parse_booking_row_id(query.data, CANCEL_CONFIRM_PREFIX)
+    if booking_row_id is None:
+        await _safe_edit_message_text(query, "Некорректный выбор записи.")
+        return
+
+    booking = booking_service.get_booking_for_user(booking_row_id, user_id)
+    if booking is None or booking.status != "active":
+        await _safe_edit_message_text(
+            query, "Эта запись не найдена или уже была отменена."
+        )
+        return
+
+    try:
+        await calcom_client.cancel_booking(booking.calcom_booking_id)
+    except CalComAPIError as error:
+        if error.status_code in CANCEL_BOOKING_TERMINAL_STATUS_CODES:
+            booking_service.mark_cancelled(booking_row_id, user_id)
+            await _safe_edit_message_text(
+                query,
+                (
+                    "Запись уже была отменена.\n\n"
+                    f"{_format_stored_booking_summary(booking)}"
+                ),
+            )
+            return
+
+        await _safe_edit_message_text(
+            query,
+            "Не удалось отменить запись. Попробуйте позже.",
+        )
+        return
+
+    booking_service.mark_cancelled(booking_row_id, user_id)
+    await _safe_edit_message_text(
+        query,
+        (
+            "Запись успешно отменена.\n\n"
+            f"{_format_stored_booking_summary(booking)}"
+        ),
+    )
+
+
+async def cancel_booking_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Return from confirmation screen to booking list."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if not _user_can_use_cancel_booking_flow(context, user_id):
+        await _deny_cancel_booking_flow_access(update)
+        return
+
+    booking_service: BookingService = context.bot_data["booking_service"]
+    bookings = booking_service.list_upcoming_bookings(user_id)
+    if not bookings:
+        await _safe_edit_message_text(query, "У вас нет предстоящих записей для отмены.")
+        return
+
+    await _safe_edit_message_text(
+        query,
+        "Выберите запись для отмены:",
+        reply_markup=build_cancel_booking_keyboard(bookings),
+    )
+
+
+def create_cancel_booking_flow_handlers() -> list:
+    """Create handlers for /cancel_booking flow."""
+    return [
+        CommandHandler("cancel_booking", cancel_booking_command),
+        CallbackQueryHandler(
+            cancel_booking_select,
+            pattern=rf"^{CANCEL_SELECT_PREFIX}\d+$",
+        ),
+        CallbackQueryHandler(
+            cancel_booking_confirm,
+            pattern=rf"^{CANCEL_CONFIRM_PREFIX}\d+$",
+        ),
+        CallbackQueryHandler(
+            cancel_booking_back,
+            pattern=rf"^{CANCEL_BACK_CALLBACK}$",
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Keyboard builders
 # ---------------------------------------------------------------------------
 
@@ -632,6 +818,20 @@ def build_availability_keyboard(
     return InlineKeyboardMarkup(buttons)
 
 
+def build_cancel_booking_keyboard(bookings: list) -> InlineKeyboardMarkup:
+    """Build keyboard with user's upcoming bookings."""
+    buttons = [
+        [
+            InlineKeyboardButton(
+                _format_stored_booking_button_text(booking),
+                callback_data=f"{CANCEL_SELECT_PREFIX}{booking.id}",
+            )
+        ]
+        for booking in bookings
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
@@ -678,12 +878,57 @@ def _format_datetime_display(date_str: str, time_iso: str, tz_id: str) -> str:
     return f"{weekday}, {dt.day} {month_abbr} в {time_value} ({tz_id})"
 
 
+def _parse_booking_row_id(callback_data: str, prefix: str) -> int | None:
+    if not callback_data.startswith(prefix):
+        return None
+    try:
+        return int(callback_data[len(prefix):])
+    except ValueError:
+        return None
+
+
+def _user_can_use_cancel_booking_flow(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> bool:
+    whitelist_service: WhitelistService | None = context.bot_data.get("whitelist_service")
+    if whitelist_service is None:
+        logger.error("Whitelist service is missing in bot_data; denying cancel booking flow")
+        return False
+    return whitelist_service.is_whitelisted(user_id)
+
+
+async def _deny_cancel_booking_flow_access(update: Update) -> None:
+    query = update.callback_query
+    if query:
+        await _safe_edit_message_text(query, CANCEL_BOOKING_ACCESS_DENIED_TEXT)
+        return
+
+    if update.message:
+        await update.message.reply_text(CANCEL_BOOKING_ACCESS_DENIED_TEXT)
+
+
+def _format_stored_booking_button_text(booking) -> str:
+    start = booking.start.astimezone(timezone.utc)
+    return f"{start.strftime('%d.%m %H:%M UTC')} — {booking.title}"
+
+
+def _format_stored_booking_summary(booking) -> str:
+    start = booking.start.astimezone(timezone.utc)
+    end = booking.end.astimezone(timezone.utc)
+    return (
+        f"{booking.title}\n"
+        f"Начало: {start.strftime('%d.%m.%Y %H:%M UTC')}\n"
+        f"Окончание: {end.strftime('%d.%m.%Y %H:%M UTC')}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # ConversationHandler factory
 # ---------------------------------------------------------------------------
 
 
-def create_booking_handler() -> ConversationHandler:
+def create_booking_conversation_handler() -> ConversationHandler:
     """Create and return the booking ConversationHandler."""
     return ConversationHandler(
         entry_points=[CommandHandler("book", book_command)],
@@ -726,3 +971,8 @@ def create_booking_handler() -> ConversationHandler:
             seconds=settings.booking_conversation_timeout_seconds
         ),
     )
+
+
+def create_booking_handler() -> ConversationHandler:
+    """Backward-compatible alias for booking handler factory."""
+    return create_booking_conversation_handler()

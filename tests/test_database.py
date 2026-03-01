@@ -1,7 +1,7 @@
 """Tests for database functionality."""
 
 from app.database import Database
-from app.database.migrations import initialize_schema
+from app.database.migrations import initialize_schema, run_migrations
 
 
 def test_database_creates_file(temp_db_path):
@@ -25,6 +25,7 @@ def test_schema_initialization(temp_db_path):
     assert "whitelist" in table_names
     assert "access_requests" in table_names
     assert "user_preferences" in table_names
+    assert "bookings" in table_names
 
 
 def test_whitelist_insert_and_query(temp_db_path):
@@ -79,3 +80,54 @@ def test_access_request_status_constraint(temp_db_path):
         assert False, "Should have raised an error for invalid status"
     except sqlite3.IntegrityError:
         pass  # Expected
+
+
+def test_migrates_bookings_start_end_columns(temp_db_path):
+    """Legacy bookings schema is migrated to start_at/end_at."""
+    db = Database(temp_db_path)
+
+    db.execute_write(
+        """
+        CREATE TABLE IF NOT EXISTS bookings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER NOT NULL,
+            calcom_booking_id INTEGER NOT NULL,
+            calcom_booking_uid TEXT NOT NULL,
+            title TEXT NOT NULL,
+            start TEXT NOT NULL,
+            "end" TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            cancelled_at TEXT,
+            UNIQUE(telegram_id, calcom_booking_id)
+        )
+        """
+    )
+    db.execute_write(
+        """
+        INSERT INTO bookings (
+            telegram_id, calcom_booking_id, calcom_booking_uid, title, start, "end", status, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            123,
+            456,
+            "uid-456",
+            "Meeting",
+            "2026-01-01T10:00:00Z",
+            "2026-01-01T11:00:00Z",
+            "active",
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+
+    run_migrations(db)
+
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(bookings)")}
+    assert "start_at" in columns
+    assert "end_at" in columns
+
+    row = db.execute_one("SELECT start_at, end_at FROM bookings WHERE telegram_id = ?", (123,))
+    assert row["start_at"] == "2026-01-01T10:00:00Z"
+    assert row["end_at"] == "2026-01-01T11:00:00Z"

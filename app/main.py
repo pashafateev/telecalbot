@@ -3,8 +3,8 @@
 import logging
 import sys
 
-from telegram.error import NetworkError
 from telegram import BotCommand
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -17,7 +17,8 @@ from app.config import settings
 from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
-    create_booking_handler,
+    create_booking_conversation_handler,
+    create_cancel_booking_flow_handlers,
     help_command,
     pending_command,
     reject_command,
@@ -29,6 +30,7 @@ from app.handlers.duration_limit import (
     removelimit_command,
     setlimit_command,
 )
+from app.services.booking_service import BookingService
 from app.services.calcom_client import CalComClient
 from app.services.duration_limit import DurationLimitService
 from app.services.whitelist import WhitelistService
@@ -74,6 +76,7 @@ def main() -> None:
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
     application.bot_data["duration_limit_service"] = DurationLimitService(db)
+    application.bot_data["booking_service"] = BookingService(db)
     application.bot_data["calcom_client"] = CalComClient(
         api_key=settings.calcom_api_key,
         api_version=settings.cal_api_version,
@@ -88,7 +91,9 @@ def main() -> None:
     application.add_handler(CommandHandler("setlimit", setlimit_command))
     application.add_handler(CommandHandler("removelimit", removelimit_command))
     application.add_handler(CommandHandler("limits", limits_command))
-    application.add_handler(create_booking_handler())
+    application.add_handler(create_booking_conversation_handler())
+    for handler in create_cancel_booking_flow_handlers():
+        application.add_handler(handler)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_onboarding_or_help)
     )
@@ -99,17 +104,21 @@ def main() -> None:
         from telegram import BotCommandScopeChat
 
         # Default commands for all users
-        await app.bot.set_my_commands([
-            BotCommand("start", "Начать работу с ботом"),
-            BotCommand("book", "Записаться на встречу"),
-            BotCommand("help", "Показать список команд"),
-        ])
+        await app.bot.set_my_commands(
+            [
+                BotCommand("start", "Начать работу с ботом"),
+                BotCommand("book", "Записаться на встречу"),
+                BotCommand("cancel_booking", "Отменить запись"),
+                BotCommand("help", "Показать список команд"),
+            ]
+        )
 
         # Admin gets additional commands
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
+                BotCommand("cancel_booking", "Отменить запись"),
                 BotCommand("help", "Показать список команд"),
                 BotCommand("pending", "Список ожидающих запросов"),
                 BotCommand("setlimit", "Установить лимит длительности"),

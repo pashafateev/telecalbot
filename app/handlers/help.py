@@ -26,6 +26,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     lines = [
         "Доступные команды:\n",
         "/book — Записаться на встречу",
+        "/cancel_booking — Отменить существующую запись",
         "/help — Показать список команд",
     ]
 

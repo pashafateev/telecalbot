@@ -344,6 +344,37 @@ class TestCalComClient:
             )
             assert mock_request.call_count == 3  # Cache was cleared
 
+    @pytest.mark.asyncio
+    async def test_cancel_booking_calls_endpoint_and_clears_cache(self, client):
+        """cancel_booking posts to cancel endpoint and clears cache."""
+        avail_response = {"status": "success", "data": {"slots": {}}}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = avail_response
+            await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+            )
+            assert mock_request.call_count == 1
+
+            mock_request.return_value = {"status": "success", "data": {}}
+            await client.cancel_booking(123)
+
+            method, path = mock_request.call_args_list[1][0]
+            assert method == "POST"
+            assert path == "/bookings/123/cancel"
+
+            mock_request.return_value = avail_response
+            await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+            )
+            assert mock_request.call_count == 3
+
 
 class TestCalComClientRetry:
     """Test retry behavior in low-level request method."""
