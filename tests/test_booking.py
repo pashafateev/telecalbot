@@ -205,7 +205,9 @@ class TestBuildAvailabilityKeyboard:
     def test_shows_slot_buttons(self, availability_response):
         keyboard = build_availability_keyboard(availability_response.slots)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
-        slot_buttons = [b for b in all_buttons if b.callback_data and b.callback_data.startswith("slot:")]
+        slot_buttons = [
+            b for b in all_buttons if b.callback_data and b.callback_data.startswith("slot:")
+        ]
         assert len(slot_buttons) == 5  # 3 + 2 slots
 
     def test_has_navigation_buttons(self, availability_response):
@@ -247,7 +249,9 @@ class TestBuildAvailabilityKeyboard:
         )
         keyboard = build_availability_keyboard(many_slots.slots)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
-        slot_buttons = [b for b in all_buttons if b.callback_data and b.callback_data.startswith("slot:")]
+        slot_buttons = [
+            b for b in all_buttons if b.callback_data and b.callback_data.startswith("slot:")
+        ]
         assert len(slot_buttons) == 6
 
     def test_max_5_days_shown(self):
@@ -958,8 +962,8 @@ class TestCancel:
         self, mock_update_with_query, mock_context
     ):
         mock_update_with_query.callback_query.data = "cancel"
-        mock_update_with_query.callback_query.edit_message_text.side_effect = (
-            BadRequest("Message can't be edited")
+        mock_update_with_query.callback_query.edit_message_text.side_effect = BadRequest(
+            "Message can't be edited"
         )
 
         await cancel(mock_update_with_query, mock_context)
@@ -1006,6 +1010,96 @@ class TestBookingTimeout:
             await booking_timeout(mock_update_with_query, mock_context)
 
         assert mock_context.user_data == {}
+
+
+class TestBookingTimeoutReminderLifecycle:
+    @pytest.fixture(autouse=True)
+    def allow_whitelisted_user(self, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+    @pytest.mark.asyncio
+    async def test_book_command_schedules_timeout_reminder(self, mock_update, mock_context):
+        mock_context.job_queue = MagicMock()
+        mock_context.job_queue.get_jobs_by_name.return_value = []
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.booking_conversation_reminder_seconds_before_timeout = 120
+
+            result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        mock_context.job_queue.run_once.assert_called_once()
+
+        call_kwargs = mock_context.job_queue.run_once.call_args.kwargs
+        assert call_kwargs["when"] == 780
+        assert call_kwargs["data"] == {"user_id": 12345}
+        assert call_kwargs["name"] == "booking_timeout_reminder:12345"
+
+    @pytest.mark.asyncio
+    async def test_select_slot_refreshes_existing_timeout_reminder(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "slot:2026-01-06:2026-01-06T10:00:00.000+03:00"
+        mock_update_with_query.callback_query.from_user.id = 12345
+        previous_reminder_job = MagicMock()
+
+        mock_context.job_queue = MagicMock()
+        mock_context.job_queue.get_jobs_by_name.return_value = [previous_reminder_job]
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.booking_conversation_reminder_seconds_before_timeout = 120
+
+            result = await select_slot(mock_update_with_query, mock_context)
+
+        assert result == BookingState.ENTERING_NAME
+        previous_reminder_job.schedule_removal.assert_called_once()
+        mock_context.job_queue.run_once.assert_called_once()
+
+        call_kwargs = mock_context.job_queue.run_once.call_args.kwargs
+        assert call_kwargs["when"] == 780
+        assert call_kwargs["data"] == {"user_id": 12345}
+        assert call_kwargs["name"] == "booking_timeout_reminder:12345"
+
+    @pytest.mark.asyncio
+    async def test_confirm_booking_success_cancels_timeout_reminder(
+        self, mock_update_with_query, mock_context, mock_calcom_client
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {
+            "name": "Alice",
+            "email": "alice@example.com",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+            "duration": 30,
+        }
+        mock_calcom_client.create_booking.return_value = BookingResponse(
+            id=1,
+            uid="abc123",
+            title="Meeting with Alice",
+            start="2026-01-06T07:00:00Z",
+            end="2026-01-06T08:00:00Z",
+            status="accepted",
+        )
+
+        reminder_job = MagicMock()
+        mock_context.job_queue = MagicMock()
+        mock_context.job_queue.get_jobs_by_name.side_effect = [[], [reminder_job]]
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.booking_conversation_reminder_seconds_before_timeout = 120
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
+
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_context.job_queue.run_once.assert_called_once()
+        reminder_job.schedule_removal.assert_called_once()
 
 
 class TestCancelBookingCommand:
@@ -1062,9 +1156,7 @@ class TestCancelBookingCallbacks:
         assert "Вы уверены" in call_text
 
     @pytest.mark.asyncio
-    async def test_select_denies_non_whitelisted_user(
-        self, mock_update_with_query, mock_context
-    ):
+    async def test_select_denies_non_whitelisted_user(self, mock_update_with_query, mock_context):
         mock_update_with_query.callback_query.data = "cancel_booking_select:3"
         mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = False
 
@@ -1247,8 +1339,8 @@ class TestChangeTimezone:
     async def test_falls_back_to_reply_when_edit_not_allowed(
         self, mock_update_with_query, mock_context
     ):
-        mock_update_with_query.callback_query.edit_message_text.side_effect = (
-            BadRequest("Message can't be edited")
+        mock_update_with_query.callback_query.edit_message_text.side_effect = BadRequest(
+            "Message can't be edited"
         )
 
         await change_timezone(mock_update_with_query, mock_context)
@@ -1275,7 +1367,9 @@ class TestNoop:
 class TestFormatDuration:
     def test_one_hour(self):
         booking = BookingResponse(
-            id=1, uid="x", title="T",
+            id=1,
+            uid="x",
+            title="T",
             start="2026-01-06T07:00:00Z",
             end="2026-01-06T08:00:00Z",
             status="accepted",
@@ -1284,7 +1378,9 @@ class TestFormatDuration:
 
     def test_two_hours(self):
         booking = BookingResponse(
-            id=1, uid="x", title="T",
+            id=1,
+            uid="x",
+            title="T",
             start="2026-01-06T07:00:00Z",
             end="2026-01-06T09:00:00Z",
             status="accepted",
@@ -1293,7 +1389,9 @@ class TestFormatDuration:
 
     def test_30_minutes(self):
         booking = BookingResponse(
-            id=1, uid="x", title="T",
+            id=1,
+            uid="x",
+            title="T",
             start="2026-01-06T07:00:00Z",
             end="2026-01-06T07:30:00Z",
             status="accepted",
@@ -1302,7 +1400,9 @@ class TestFormatDuration:
 
     def test_45_minutes(self):
         booking = BookingResponse(
-            id=1, uid="x", title="T",
+            id=1,
+            uid="x",
+            title="T",
             start="2026-01-06T07:00:00Z",
             end="2026-01-06T07:45:00Z",
             status="accepted",
