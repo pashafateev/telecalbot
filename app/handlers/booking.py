@@ -65,8 +65,12 @@ CANCEL_CONFIRM_PREFIX = "cancel_booking_confirm:"
 CANCEL_BACK_CALLBACK = "cancel_booking_back"
 CANCEL_BOOKING_TERMINAL_STATUS_CODES = {404, 409}
 CANCEL_BOOKING_ACCESS_DENIED_TEXT = (
-    "Эта команда доступна только одобренным пользователям.\n"
-    "Используйте /start для запроса доступа."
+    "Эта команда доступна только одобренным пользователям.\nИспользуйте /start для запроса доступа."
+)
+BOOKING_REMINDER_JOB_PREFIX = "booking_timeout_reminder:"
+BOOKING_TIMEOUT_REMINDER_TEXT = (
+    "Напоминание: сессия записи скоро истечет из-за неактивности.\n"
+    "Пожалуйста, завершите запись или начните заново командой /book."
 )
 
 
@@ -119,6 +123,100 @@ def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return whitelist_service.is_whitelisted(user_id)
 
 
+def _booking_reminder_job_name(user_id: int) -> str:
+    return f"{BOOKING_REMINDER_JOB_PREFIX}{user_id}"
+
+
+def _coerce_positive_int(value, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_booking_reminder_delay_seconds() -> int | None:
+    timeout_seconds = _coerce_positive_int(
+        getattr(settings, "booking_conversation_timeout_seconds", 900),
+        900,
+    )
+    reminder_before_timeout = _coerce_positive_int(
+        getattr(settings, "booking_conversation_reminder_seconds_before_timeout", 120),
+        120,
+    )
+    if timeout_seconds <= 0 or reminder_before_timeout <= 0:
+        return None
+
+    reminder_delay = timeout_seconds - reminder_before_timeout
+    if reminder_delay <= 0:
+        return None
+
+    return reminder_delay
+
+
+def _cancel_booking_timeout_reminder(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> None:
+    job_queue = getattr(context, "job_queue", None)
+    if job_queue is None:
+        return
+
+    get_jobs_by_name = getattr(job_queue, "get_jobs_by_name", None)
+    if get_jobs_by_name is None:
+        return
+
+    for job in get_jobs_by_name(_booking_reminder_job_name(user_id)):
+        job.schedule_removal()
+
+
+def _refresh_booking_timeout_reminder(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> None:
+    reminder_delay = _get_booking_reminder_delay_seconds()
+    if reminder_delay is None:
+        _cancel_booking_timeout_reminder(context, user_id)
+        return
+
+    job_queue = getattr(context, "job_queue", None)
+    if job_queue is None:
+        return
+
+    run_once = getattr(job_queue, "run_once", None)
+    if run_once is None:
+        return
+
+    _cancel_booking_timeout_reminder(context, user_id)
+    run_once(
+        _send_booking_timeout_reminder,
+        when=reminder_delay,
+        data={"user_id": user_id},
+        name=_booking_reminder_job_name(user_id),
+    )
+
+
+async def _send_booking_timeout_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job_data = context.job.data if context.job else {}
+    user_id = job_data.get("user_id")
+    if user_id is None:
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=BOOKING_TIMEOUT_REMINDER_TEXT,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send booking timeout reminder for user_id=%s",
+            user_id,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -127,9 +225,11 @@ def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the booking conversation with timezone selection."""
     if not _is_whitelisted(update, context):
+        _cancel_booking_timeout_reminder(context, update.effective_user.id)
         await _deny_booking_access(update)
         return ConversationHandler.END
 
+    _refresh_booking_timeout_reminder(context, update.effective_user.id)
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
         "Выберите ваш часовой пояс:",
@@ -151,6 +251,7 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     timezone_id = query.data.split(":", 1)[1]
     context.user_data["timezone"] = timezone_id
     context.user_data["offset_days"] = 0
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     return await _handle_duration_selection(query, context)
 
@@ -158,6 +259,7 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Check duration limits and show duration picker or auto-select."""
     user_id = query.from_user.id
+    _refresh_booking_timeout_reminder(context, user_id)
     duration_limit_service: DurationLimitService | None = context.bot_data.get(
         "duration_limit_service"
     )
@@ -195,6 +297,7 @@ async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return BookingState.SELECTING_DURATION
 
     context.user_data["duration"] = duration
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     return await _show_availability(query, context, offset_days=0)
 
@@ -203,6 +306,7 @@ async def change_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Go back to timezone selection."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     keyboard = build_timezone_keyboard()
     await _safe_edit_message_text(
@@ -223,6 +327,7 @@ async def _show_availability(
 ) -> int:
     """Fetch and display availability for the user's timezone."""
     await _safe_edit_message_text(query, "Загружаю доступное время...")
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     timezone_id = context.user_data["timezone"]
@@ -246,9 +351,7 @@ async def _show_availability(
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
-                            InlineKeyboardButton(
-                                TIMEZONE_BUTTON_LABEL, callback_data="change_tz"
-                            ),
+                            InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz"),
                             InlineKeyboardButton("Отмена", callback_data="cancel"),
                         ]
                     ]
@@ -297,6 +400,7 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """No-op handler for day header buttons."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
     return BookingState.VIEWING_AVAILABILITY
 
 
@@ -309,6 +413,7 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     """Handle time slot selection and prompt for name."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     # callback_data format: "slot:<date>:<time_iso>"
     parts = query.data.split(":", 2)
@@ -326,6 +431,7 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store user's name and ask about email."""
+    _refresh_booking_timeout_reminder(context, update.effective_user.id)
     name = update.message.text.strip()
 
     if not name:
@@ -365,6 +471,7 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Handle yes/no email decision."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     if query.data == "email_yes":
         await _safe_edit_message_text(query, "Введите ваш email:")
@@ -376,12 +483,11 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store email and show confirmation."""
+    _refresh_booking_timeout_reminder(context, update.effective_user.id)
     email = update.message.text.strip()
 
     if "@" not in email or "." not in email.split("@")[-1]:
-        await update.message.reply_text(
-            "Некорректный email. Попробуйте ещё раз:"
-        )
+        await update.message.reply_text("Некорректный email. Попробуйте ещё раз:")
         return BookingState.ENTERING_EMAIL
 
     context.user_data["email"] = email
@@ -447,11 +553,13 @@ def _confirmation_keyboard() -> InlineKeyboardMarkup:
 async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Create the booking via Cal.com API."""
     if not _is_whitelisted(update, context):
+        _cancel_booking_timeout_reminder(context, update.effective_user.id)
         await _deny_booking_access(update)
         return ConversationHandler.END
 
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     await _safe_edit_message_text(query, "Создаю запись...")
 
@@ -463,6 +571,13 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         start_utc = slot_to_utc(data["selected_time"])
+        logger.info(
+            "Creating booking for user_id=%s event_type_id=%s start_utc=%s timezone=%s",
+            update.effective_user.id,
+            event_type_id,
+            start_utc,
+            data.get("timezone"),
+        )
 
         booking = await calcom_client.create_booking(
             BookingRequest(
@@ -490,6 +605,14 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     booking.id,
                 )
 
+        logger.info(
+            "Booking created for user_id=%s booking_id=%s booking_uid=%s status=%s",
+            update.effective_user.id,
+            booking.id,
+            booking.uid,
+            booking.status,
+        )
+
         formatted_time = _format_datetime_display(
             data["selected_date"],
             data["selected_time"],
@@ -497,9 +620,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         duration_str = _format_duration(booking)
         email_note = (
-            f"\nПисьмо с подтверждением отправлено на {email}."
-            if data.get("email")
-            else ""
+            f"\nПисьмо с подтверждением отправлено на {email}." if data.get("email") else ""
         )
 
         await _safe_edit_message_text(
@@ -508,15 +629,20 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"Время: {formatted_time}\n"
             f"Длительность: {duration_str}\n\n"
             f"Мы свяжемся через Telegram в назначенное время."
-            f"{email_note}"
+            f"{email_note}",
         )
+        _cancel_booking_timeout_reminder(context, update.effective_user.id)
         return ConversationHandler.END
 
     except CalComAPIError as e:
+        logger.warning(
+            "Booking create failed for user_id=%s status=%s message=%s",
+            update.effective_user.id,
+            e.status_code,
+            e.message,
+        )
         if e.status_code == 409:
-            error_msg = (
-                "Это время уже занято. Пожалуйста, выберите другое время."
-            )
+            error_msg = "Это время уже занято. Пожалуйста, выберите другое время."
         else:
             error_msg = "Извините, что-то пошло не так. Попробуйте ещё раз."
 
@@ -532,6 +658,28 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ]
         )
         await _safe_edit_message_text(query, error_msg, reply_markup=keyboard)
+        return BookingState.VIEWING_AVAILABILITY
+    except Exception:
+        logger.exception(
+            "Unexpected error while creating booking for user_id=%s",
+            update.effective_user.id,
+        )
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Выбрать другое время",
+                        callback_data=f"tz:{data['timezone']}",
+                    ),
+                    InlineKeyboardButton("Отмена", callback_data="cancel"),
+                ]
+            ]
+        )
+        await _safe_edit_message_text(
+            query,
+            "Извините, что-то пошло не так. Попробуйте ещё раз.",
+            reply_markup=keyboard,
+        )
         return BookingState.VIEWING_AVAILABILITY
 
 
@@ -549,6 +697,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_text("Запись отменена.")
 
+    if update.effective_user:
+        _cancel_booking_timeout_reminder(context, update.effective_user.id)
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -562,8 +712,7 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     query = update.callback_query
     timeout_text = (
-        "Сессия записи истекла из-за неактивности.\n"
-        "Пожалуйста, начните заново командой /book."
+        "Сессия записи истекла из-за неактивности.\nПожалуйста, начните заново командой /book."
     )
     try:
         if query:
@@ -571,6 +720,8 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif update.message:
             await update.message.reply_text(timeout_text)
     finally:
+        if update.effective_user:
+            _cancel_booking_timeout_reminder(context, update.effective_user.id)
         context.user_data.clear()
 
     return ConversationHandler.END
@@ -619,17 +770,12 @@ async def cancel_booking_select(update: Update, context: ContextTypes.DEFAULT_TY
 
     booking = booking_service.get_booking_for_user(booking_row_id, user_id)
     if booking is None or booking.status != "active":
-        await _safe_edit_message_text(
-            query, "Эта запись не найдена или уже была отменена."
-        )
+        await _safe_edit_message_text(query, "Эта запись не найдена или уже была отменена.")
         return
 
     await _safe_edit_message_text(
         query,
-        (
-            "Вы уверены, что хотите отменить запись?\n\n"
-            f"{_format_stored_booking_summary(booking)}"
-        ),
+        (f"Вы уверены, что хотите отменить запись?\n\n{_format_stored_booking_summary(booking)}"),
         reply_markup=InlineKeyboardMarkup(
             [
                 [
@@ -666,9 +812,7 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
     booking = booking_service.get_booking_for_user(booking_row_id, user_id)
     if booking is None or booking.status != "active":
-        await _safe_edit_message_text(
-            query, "Эта запись не найдена или уже была отменена."
-        )
+        await _safe_edit_message_text(query, "Эта запись не найдена или уже была отменена.")
         return
 
     try:
@@ -678,10 +822,7 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
             booking_service.mark_cancelled(booking_row_id, user_id)
             await _safe_edit_message_text(
                 query,
-                (
-                    "Запись уже была отменена.\n\n"
-                    f"{_format_stored_booking_summary(booking)}"
-                ),
+                (f"Запись уже была отменена.\n\n{_format_stored_booking_summary(booking)}"),
             )
             return
 
@@ -694,10 +835,7 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
     booking_service.mark_cancelled(booking_row_id, user_id)
     await _safe_edit_message_text(
         query,
-        (
-            "Запись успешно отменена.\n\n"
-            f"{_format_stored_booking_summary(booking)}"
-        ),
+        (f"Запись успешно отменена.\n\n{_format_stored_booking_summary(booking)}"),
     )
 
 
@@ -780,9 +918,7 @@ def build_availability_keyboard(
             continue
 
         day_name = format_date_header(date_str)
-        buttons.append(
-            [InlineKeyboardButton(f"— {day_name} —", callback_data="noop")]
-        )
+        buttons.append([InlineKeyboardButton(f"— {day_name} —", callback_data="noop")])
 
         sorted_time_slots = sorted(time_slots, key=lambda slot: slot.time)
         time_buttons = []
@@ -799,20 +935,10 @@ def build_availability_keyboard(
 
     nav_row = []
     if offset_days > 0:
-        nav_row.append(
-            InlineKeyboardButton(
-                "← Назад", callback_data=f"dates:{offset_days - 5}"
-            )
-        )
-    nav_row.append(
-        InlineKeyboardButton(
-            "Ещё даты →", callback_data=f"dates:{offset_days + 5}"
-        )
-    )
+        nav_row.append(InlineKeyboardButton("← Назад", callback_data=f"dates:{offset_days - 5}"))
+    nav_row.append(InlineKeyboardButton("Ещё даты →", callback_data=f"dates:{offset_days + 5}"))
     buttons.append(nav_row)
-    buttons.append(
-        [InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")]
-    )
+    buttons.append([InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")])
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
 
     return InlineKeyboardMarkup(buttons)
@@ -882,7 +1008,7 @@ def _parse_booking_row_id(callback_data: str, prefix: str) -> int | None:
     if not callback_data.startswith(prefix):
         return None
     try:
-        return int(callback_data[len(prefix):])
+        return int(callback_data[len(prefix) :])
     except ValueError:
         return None
 
@@ -967,9 +1093,7 @@ def create_booking_conversation_handler() -> ConversationHandler:
             ConversationHandler.TIMEOUT: [TypeHandler(Update, booking_timeout)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        conversation_timeout=timedelta(
-            seconds=settings.booking_conversation_timeout_seconds
-        ),
+        conversation_timeout=timedelta(seconds=settings.booking_conversation_timeout_seconds),
     )
 
 

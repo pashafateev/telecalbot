@@ -28,6 +28,7 @@ def test_config_defaults():
     assert settings.database_path == "telecalbot.db"
     assert settings.log_level == "INFO"
     assert settings.booking_conversation_timeout_seconds == 900
+    assert settings.booking_conversation_reminder_seconds_before_timeout == 120
 
 
 def test_get_event_type_id_with_duration_specific():
@@ -64,7 +65,11 @@ def test_get_event_type_id_raises_when_none():
     """Test get_event_type_id raises ValueError when no ID configured."""
     from app.config import Settings
 
-    settings = Settings()
+    settings = Settings(
+        calcom_event_type_id=None,
+        calcom_event_type_id_30=None,
+        calcom_event_type_id_60=None,
+    )
     with pytest.raises(ValueError, match="No event type ID configured"):
         settings.get_event_type_id(30)
 
