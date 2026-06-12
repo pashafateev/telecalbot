@@ -15,15 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v8
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build image
         run: docker build -t telecalbot:ci .
@@ -74,10 +74,13 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Setup Flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2
+      - name: Install Flyctl
+        run: |
+          curl -fsSL https://fly.io/install.sh -o install-flyctl.sh
+          sh install-flyctl.sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
       - name: Deploy
         run: flyctl deploy --remote-only
