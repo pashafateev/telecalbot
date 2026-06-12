@@ -1,19 +1,50 @@
-name: Tests
-on: [pull_request]
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync
-      - run: uv run pytest
-  docker:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest tests/ -v
+
+  docker-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t telecalbot:ci .
-      - run: |
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t telecalbot:ci .
+
+      - name: Import application
+        run: |
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN=123:ABC \
             -e CALCOM_API_KEY=dummy \
@@ -21,7 +52,9 @@ jobs:
             -e DATABASE_PATH=/tmp/telecalbot.db \
             telecalbot:ci \
             /app/.venv/bin/python -c "import app.main; print('import-ok')"
-      - run: |
+
+      - name: Run database migrations
+        run: |
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN=123:ABC \
             -e CALCOM_API_KEY=dummy \
@@ -29,3 +62,24 @@ jobs:
             -e DATABASE_PATH=/tmp/telecalbot.db \
             telecalbot:ci \
             /app/.venv/bin/python -c "from app.database import db, run_migrations; run_migrations(db); print('migrations-ok')"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+      - docker-smoke
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: fly-deploy-main
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2
+
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -46,7 +46,7 @@ class TestDurationSelection:
 
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.get_event_type_id = MagicMock(return_value=42)
-            result = await select_duration(mock_update_with_query, mock_context)
+            await select_duration(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["duration"] == 30
 
@@ -60,7 +60,7 @@ class TestDurationSelection:
 
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.get_event_type_id = MagicMock(return_value=99)
-            result = await select_duration(mock_update_with_query, mock_context)
+            await select_duration(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["duration"] == 60
 

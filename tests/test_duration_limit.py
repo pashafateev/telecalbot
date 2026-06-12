@@ -13,7 +13,6 @@ from app.handlers.duration_limit import (
 )
 from app.services.duration_limit import DurationLimitService
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -98,7 +97,7 @@ class TestGetAllLimits:
         duration_limit_service.set_limit(222, 60, set_by=1)
         limits = duration_limit_service.get_all_limits()
         assert len(limits) == 2
-        ids = {l["telegram_id"] for l in limits}
+        ids = {limit["telegram_id"] for limit in limits}
         assert ids == {111, 222}
 
 
