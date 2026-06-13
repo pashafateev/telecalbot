@@ -13,14 +13,12 @@ This script validates Cal.com API behavior to inform implementation decisions:
 
 import asyncio
 import json
-import os
 import sys
 from datetime import date, timedelta
 from typing import Any
 
 import httpx
 from decouple import config
-
 
 # Configuration
 API_KEY = config("CALCOM_API_KEY", default="")
@@ -326,7 +324,7 @@ async def test_rate_limits(client: httpx.AsyncClient, results: ResearchResults):
     print("[4/5] Checking rate limit headers...")
 
     if results.rate_limit_headers:
-        print(f"  ✅ Rate limit headers found in previous responses")
+        print("  ✅ Rate limit headers found in previous responses")
     else:
         print("  ⚠️  No rate limit headers detected")
         print("  Decision: Use conservative 60 requests/minute ceiling")

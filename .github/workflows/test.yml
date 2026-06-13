@@ -1,19 +1,50 @@
-name: Tests
-on: [pull_request]
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync
-      - run: uv run pytest
-  docker:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest tests/ -v
+
+  docker-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t telecalbot:ci .
-      - run: |
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Build image
+        run: docker build -t telecalbot:ci .
+
+      - name: Import application
+        run: |
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN=123:ABC \
             -e CALCOM_API_KEY=dummy \
@@ -21,7 +52,9 @@ jobs:
             -e DATABASE_PATH=/tmp/telecalbot.db \
             telecalbot:ci \
             /app/.venv/bin/python -c "import app.main; print('import-ok')"
-      - run: |
+
+      - name: Run database migrations
+        run: |
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN=123:ABC \
             -e CALCOM_API_KEY=dummy \
@@ -29,3 +62,34 @@ jobs:
             -e DATABASE_PATH=/tmp/telecalbot.db \
             telecalbot:ci \
             /app/.venv/bin/python -c "from app.database import db, run_migrations; run_migrations(db); print('migrations-ok')"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+      - docker-smoke
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: fly-deploy-main
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Install Flyctl
+        env:
+          FLYCTL_VERSION: "0.4.59"
+          FLYCTL_SHA256: "1c560d9dbdbfdccf1fe4899ae6e55dd073cc7b5400fc15d9ae4d0176c4eff17d"
+        run: |
+          archive="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/${archive}"
+          printf '%s  %s\n' "$FLYCTL_SHA256" "$archive" > flyctl.sha256
+          sha256sum --check flyctl.sha256
+          mkdir -p "$HOME/.fly/bin"
+          tar -xzf "$archive" -C "$HOME/.fly/bin" flyctl
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
