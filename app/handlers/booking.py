@@ -3,6 +3,7 @@
 import logging
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum, auto
+from types import SimpleNamespace
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -27,6 +28,7 @@ from app.services.calcom_client import (
     CalComClient,
 )
 from app.services.duration_limit import DurationLimitService
+from app.services.user_preferences import UserPreferenceService
 from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,21 @@ class BookingState(IntEnum):
     EMAIL_DECISION = auto()
     ENTERING_EMAIL = auto()
     CONFIRMING = auto()
+
+
+class _MessageReplyTarget:
+    """Adapter for reusing callback edit flow from a command message."""
+
+    def __init__(self, message, user_id: int, prefix: str | None = None):
+        self.message = message
+        self.from_user = SimpleNamespace(id=user_id)
+        self._prefix = prefix
+
+    async def edit_message_text(self, text: str, reply_markup=None) -> None:
+        if self._prefix is not None:
+            text = f"{self._prefix}\n\n{text}"
+            self._prefix = None
+        await self.message.reply_text(text, reply_markup=reply_markup)
 
 
 def _is_non_editable_message_error(error: BadRequest) -> bool:
@@ -230,6 +247,29 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ConversationHandler.END
 
     _refresh_booking_timeout_reminder(context, update.effective_user.id)
+
+    preference_service: UserPreferenceService | None = context.bot_data.get(
+        "user_preference_service"
+    )
+    if preference_service is not None:
+        try:
+            preference = preference_service.get_timezone(update.effective_user.id)
+        except Exception:
+            logger.exception(
+                "Failed to load timezone preference for user_id=%s",
+                update.effective_user.id,
+            )
+        else:
+            if preference is not None:
+                context.user_data["timezone"] = preference.timezone
+                context.user_data["offset_days"] = 0
+                target = _MessageReplyTarget(
+                    update.message,
+                    update.effective_user.id,
+                    prefix=f"Используем сохраненный часовой пояс: {preference.timezone}.",
+                )
+                return await _handle_duration_selection(target, context)
+
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
         "Выберите ваш часовой пояс:",
@@ -251,6 +291,18 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     timezone_id = query.data.split(":", 1)[1]
     context.user_data["timezone"] = timezone_id
     context.user_data["offset_days"] = 0
+    preference_service: UserPreferenceService | None = context.bot_data.get(
+        "user_preference_service"
+    )
+    if preference_service is not None:
+        try:
+            preference_service.set_timezone(query.from_user.id, timezone_id)
+        except Exception:
+            logger.exception(
+                "Failed to persist timezone preference for user_id=%s timezone=%s",
+                query.from_user.id,
+                timezone_id,
+            )
     _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     return await _handle_duration_selection(query, context)
@@ -902,6 +954,7 @@ def build_duration_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(label, callback_data=f"duration:{minutes}")]
         for minutes, label in DURATION_OPTIONS.items()
     ]
+    buttons.append([InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz")])
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1065,6 +1118,7 @@ def create_booking_conversation_handler() -> ConversationHandler:
             ],
             BookingState.SELECTING_DURATION: [
                 CallbackQueryHandler(select_duration, pattern="^duration:"),
+                CallbackQueryHandler(change_timezone, pattern="^change_tz$"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             BookingState.VIEWING_AVAILABILITY: [

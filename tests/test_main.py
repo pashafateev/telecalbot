@@ -45,11 +45,13 @@ class TestMain:
         self, mock_setup_logging, mock_run_migrations, mock_application
     ):
         app_instance = MagicMock()
+        app_instance.bot_data = {}
         mock_application.builder.return_value.token.return_value.build.return_value = app_instance
 
         main()
 
         mock_setup_logging.assert_called_once()
         mock_run_migrations.assert_called_once()
+        assert "user_preference_service" in app_instance.bot_data
         app_instance.add_error_handler.assert_called_once_with(error_handler)
         app_instance.run_polling.assert_called_once()
