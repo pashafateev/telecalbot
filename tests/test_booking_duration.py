@@ -238,7 +238,13 @@ class TestFifthStepAcknowledgement:
             for row in call.kwargs["reply_markup"].inline_keyboard
             for button in row
         ]
-        assert button_texts == ["30 минут", "60 минут", "120 минут", "Отмена"]
+        assert button_texts == [
+            "30 минут",
+            "60 минут",
+            "120 минут",
+            "Часовой пояс",
+            "Отмена",
+        ]
 
     @pytest.mark.asyncio
     async def test_stale_acknowledgement_without_pending_duration_returns_to_picker(
