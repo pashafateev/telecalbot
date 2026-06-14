@@ -32,6 +32,19 @@ The Cal.com API v2 is fully functional and supports all requirements for the Tel
 
 **Finding**: Different endpoints require different API versions
 
+**Current verification (2026-06-14)**: Cal.com still requires endpoint-specific
+`cal-api-version` headers, but the required versions have changed since this
+research was first captured. The production client now pins:
+
+| Endpoint | Required Version |
+|----------|-----------------|
+| `GET /v2/slots` | `2024-09-04` |
+| `POST /v2/bookings` | `2026-02-25` |
+| `POST /v2/bookings/{bookingUid}/cancel` | `2026-02-25` |
+
+`CAL_API_VERSION` is treated as a fallback for endpoints without an explicit
+client-pinned version.
+
 | Endpoint | Required Version |
 |----------|-----------------|
 | `/v2/event-types` | `2024-06-14` |
