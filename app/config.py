@@ -1,5 +1,7 @@
 """Application configuration loaded from environment variables."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -29,6 +31,19 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     booking_conversation_timeout_seconds: int = 900
     booking_conversation_reminder_seconds_before_timeout: int = 120
+
+    # Telegram Delivery Settings
+    telegram_delivery_mode: Literal["polling", "webhook"] = "polling"
+    telegram_webhook_url: str | None = None
+    telegram_webhook_secret_token: str | None = None
+    telegram_webhook_path: str = "/telegram/webhook"
+    telegram_webhook_listen: str = "0.0.0.0"
+    telegram_webhook_port: int = 8080
+    telegram_drop_pending_updates: bool = False
+
+    # HTTP Health Settings
+    health_check_path: str = "/healthz"
+    readiness_check_path: str = "/readyz"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

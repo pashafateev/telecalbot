@@ -34,6 +34,7 @@ from app.services.booking_service import BookingService
 from app.services.calcom_client import CalComClient
 from app.services.duration_limit import DurationLimitService
 from app.services.whitelist import WhitelistService
+from app.webhook_server import run_webhook
 
 
 def setup_logging() -> None:
@@ -59,18 +60,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Unhandled exception while processing update %r", update, exc_info=error)
 
 
-def main() -> None:
-    """Start the bot."""
-    setup_logging()
-    logger = logging.getLogger(__name__)
-
-    logger.info("Initializing Telecalbot...")
-
-    # Initialize database
-    run_migrations(db)
-    logger.info(f"Database initialized at {settings.database_path}")
-
-    # Create application
+def create_application() -> Application:
+    """Create and configure the Telegram application."""
     application = Application.builder().token(settings.telegram_bot_token).build()
 
     # Inject services
@@ -131,10 +122,28 @@ def main() -> None:
         )
 
     application.post_init = post_init
+    return application
+
+
+def main() -> None:
+    """Start the bot."""
+    setup_logging()
+    logger = logging.getLogger(__name__)
+
+    logger.info("Initializing Telecalbot...")
+
+    # Initialize database
+    run_migrations(db)
+    logger.info(f"Database initialized at {settings.database_path}")
+
+    application = create_application()
 
     logger.info("Bot started. Press Ctrl+C to stop.")
 
-    # Start polling
+    if settings.telegram_delivery_mode == "webhook":
+        run_webhook(application, settings)
+        return
+
     application.run_polling()
 
 
