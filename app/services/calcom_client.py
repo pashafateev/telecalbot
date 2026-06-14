@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class BookingRequest(BaseModel):
     eventTypeId: int
     start: str  # ISO 8601 UTC datetime
     attendee: Attendee
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class BookingResponse(BaseModel):
@@ -70,6 +70,9 @@ class CalComClient:
     """Async Cal.com API client with caching."""
 
     BASE_URL = "https://api.cal.com/v2"
+    DEFAULT_API_VERSION = "2024-06-14"
+    SLOTS_API_VERSION = "2024-09-04"
+    BOOKINGS_API_VERSION = "2026-02-25"
     MAX_RETRIES = 3
     INITIAL_RETRY_DELAY_SECONDS = 0.5
     RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
@@ -84,14 +87,16 @@ class CalComClient:
 
         Args:
             api_key: Cal.com API key.
-            api_version: Cal.com API version (e.g., "2024-06-14").
+            api_version: Fallback Cal.com API version for endpoints without
+                an explicit endpoint-specific version.
             cache_ttl: Cache TTL in seconds (default 300 = 5 minutes).
         """
+        self.api_version = api_version or self.DEFAULT_API_VERSION
         self._client = httpx.AsyncClient(
             base_url=self.BASE_URL,
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "cal-api-version": api_version,
+                "cal-api-version": self.api_version,
                 "Content-Type": "application/json",
             },
             timeout=30.0,
@@ -146,16 +151,17 @@ class CalComClient:
         # Fetch from API
         response = await self._request(
             "GET",
-            "/slots/available",
+            "/slots",
+            api_version=self.SLOTS_API_VERSION,
             params={
                 "eventTypeId": event_type_id,
-                "startTime": f"{start_date}T00:00:00Z",
-                "endTime": f"{end_date}T23:59:59Z",
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
                 "timeZone": timezone,
             },
         )
 
-        data = AvailabilityResponse.model_validate(response["data"])
+        data = self._parse_availability(response["data"])
         self._availability_cache[cache_key] = (time.time(), data)
         return data
 
@@ -174,6 +180,7 @@ class CalComClient:
         response = await self._request(
             "POST",
             "/bookings",
+            api_version=self.BOOKINGS_API_VERSION,
             json=request.model_dump(),
         )
 
@@ -183,11 +190,12 @@ class CalComClient:
 
         return BookingResponse.model_validate(response["data"])
 
-    async def cancel_booking(self, booking_id: int | str) -> None:
-        """Cancel an existing booking by Cal.com booking identifier."""
+    async def cancel_booking(self, booking_uid: str) -> None:
+        """Cancel an existing booking by Cal.com booking UID."""
         await self._request(
             "POST",
-            f"/bookings/{booking_id}/cancel",
+            f"/bookings/{booking_uid}/cancel",
+            api_version=self.BOOKINGS_API_VERSION,
             json={},
         )
         # Keep cache consistent with changed availability
@@ -198,6 +206,7 @@ class CalComClient:
         self,
         method: str,
         path: str,
+        api_version: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make HTTP request to Cal.com API.
@@ -205,6 +214,7 @@ class CalComClient:
         Args:
             method: HTTP method (GET, POST, etc.).
             path: API endpoint path.
+            api_version: Endpoint-specific Cal.com API version.
             **kwargs: Additional arguments for httpx request.
 
         Returns:
@@ -217,8 +227,9 @@ class CalComClient:
         last_error: CalComAPIError | None = None
 
         for attempt in range(1, self.MAX_RETRIES + 2):
+            request_kwargs = self._with_api_version_header(kwargs, api_version)
             try:
-                response = await self._client.request(method, path, **kwargs)
+                response = await self._client.request(method, path, **request_kwargs)
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
@@ -228,12 +239,14 @@ class CalComClient:
 
                 last_error = CalComAPIError(status_code=status_code, message=message)
                 should_retry = status_code in self.RETRYABLE_STATUS_CODES
+                sleep_seconds = self._retry_delay_seconds(e.response, delay_seconds)
             except httpx.RequestError as e:
                 message = str(e)
                 logger.error("Cal.com API network error: %s", message)
 
                 last_error = CalComAPIError(status_code=0, message=message)
                 should_retry = True
+                sleep_seconds = delay_seconds
 
             if not should_retry or attempt > self.MAX_RETRIES:
                 raise last_error
@@ -244,9 +257,57 @@ class CalComClient:
                 path,
                 attempt + 1,
                 self.MAX_RETRIES + 1,
-                delay_seconds,
+                sleep_seconds,
             )
-            await asyncio.sleep(delay_seconds)
+            await asyncio.sleep(sleep_seconds)
             delay_seconds *= 2
 
         raise last_error
+
+    def _with_api_version_header(
+        self,
+        kwargs: dict[str, Any],
+        api_version: str | None,
+    ) -> dict[str, Any]:
+        """Return request kwargs with the correct Cal.com API version header."""
+        request_kwargs = dict(kwargs)
+        headers = dict(request_kwargs.pop("headers", {}))
+        headers.setdefault("cal-api-version", api_version or self.api_version)
+        request_kwargs["headers"] = headers
+        return request_kwargs
+
+    @staticmethod
+    def _retry_delay_seconds(response: httpx.Response, fallback_seconds: float) -> float:
+        """Use Retry-After for rate limits when Cal.com provides it."""
+        if response.status_code != 429:
+            return fallback_seconds
+
+        retry_after = response.headers.get("Retry-After")
+        if retry_after is None:
+            return fallback_seconds
+
+        try:
+            seconds = float(retry_after)
+        except ValueError:
+            return fallback_seconds
+
+        return max(seconds, 0.0)
+
+    @staticmethod
+    def _parse_availability(data: dict[str, Any]) -> AvailabilityResponse:
+        """Normalize supported Cal.com slot response shapes."""
+        raw_slots = data.get("slots", data)
+        normalized_slots: dict[str, list[dict[str, str]]] = {}
+
+        for day, slots in raw_slots.items():
+            normalized_slots[day] = []
+            for slot in slots:
+                if isinstance(slot, str):
+                    normalized_slots[day].append({"time": slot})
+                    continue
+
+                slot_time = slot.get("time") or slot.get("start")
+                if slot_time is not None:
+                    normalized_slots[day].append({"time": slot_time})
+
+        return AvailabilityResponse.model_validate({"slots": normalized_slots})

@@ -402,7 +402,8 @@ class TestSelectTimezone:
     ):
         """With a duration limit, API errors during availability fetch are handled."""
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
-        mock_calcom_client.get_availability.side_effect = CalComAPIError(500, "Server error")
+        raw_error = "Server error: token cal_secret_123 failed"
+        mock_calcom_client.get_availability.side_effect = CalComAPIError(500, raw_error)
 
         mock_duration_service = MagicMock()
         mock_duration_service.get_limit.return_value = 30
@@ -418,6 +419,7 @@ class TestSelectTimezone:
         assert result == BookingState.VIEWING_AVAILABILITY
         last_call = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "извините" in last_call.lower() or "не удалось" in last_call.lower()
+        assert raw_error not in last_call
 
 
 class TestSelectSlot:
@@ -848,13 +850,16 @@ class TestConfirmBooking:
     ):
         mock_update_with_query.callback_query.data = "confirm"
         mock_context.user_data = user_data_ready
-        mock_calcom_client.create_booking.side_effect = CalComAPIError(500, "Server error")
+        raw_error = "Server error: token cal_secret_123 failed"
+        mock_calcom_client.create_booking.side_effect = CalComAPIError(500, raw_error)
 
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.get_event_type_id = MagicMock(return_value=42)
             result = await confirm_booking(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
+        error_msg = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert raw_error not in error_msg
 
     @pytest.mark.asyncio
     async def test_shows_dynamic_duration(
@@ -1172,13 +1177,16 @@ class TestCancelBookingCallbacks:
         booking.status = "active"
         booking.title = "Step session"
         booking.calcom_booking_id = 99
+        booking.calcom_booking_uid = "booking_uid_99"
         booking.start = datetime(2026, 1, 6, 7, 0, tzinfo=timezone.utc)
         booking.end = datetime(2026, 1, 6, 8, 0, tzinfo=timezone.utc)
         mock_context.bot_data["booking_service"].get_booking_for_user.return_value = booking
 
         await cancel_booking_confirm(mock_update_with_query, mock_context)
 
-        mock_context.bot_data["calcom_client"].cancel_booking.assert_awaited_once_with(99)
+        mock_context.bot_data["calcom_client"].cancel_booking.assert_awaited_once_with(
+            "booking_uid_99"
+        )
         mock_context.bot_data["booking_service"].mark_cancelled.assert_called_once_with(3, 12345)
 
     @pytest.mark.asyncio

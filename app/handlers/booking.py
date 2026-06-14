@@ -816,7 +816,7 @@ async def cancel_booking_confirm(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     try:
-        await calcom_client.cancel_booking(booking.calcom_booking_id)
+        await calcom_client.cancel_booking(booking.calcom_booking_uid)
     except CalComAPIError as error:
         if error.status_code in CANCEL_BOOKING_TERMINAL_STATUS_CODES:
             booking_service.mark_cancelled(booking_row_id, user_id)
