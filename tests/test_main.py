@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from telegram.error import NetworkError
 
-from app.main import error_handler, main
+from app.main import error_handler, main, settings
 
 
 class TestErrorHandler:
@@ -58,6 +58,7 @@ class TestMain:
         mock_run_migrations.assert_not_called()
 
     @patch("app.config.Settings.validate_event_type_configuration")
+    @patch("app.main.run_webhook")
     @patch("app.main.Application")
     @patch("app.main.run_migrations")
     @patch("app.main.setup_logging")
@@ -66,8 +67,11 @@ class TestMain:
         mock_setup_logging,
         mock_run_migrations,
         mock_application,
+        mock_run_webhook,
         mock_validate_event_types,
+        monkeypatch,
     ):
+        monkeypatch.setattr("app.main.settings.telegram_delivery_mode", "polling")
         app_instance = MagicMock()
         mock_application.builder.return_value.token.return_value.build.return_value = app_instance
 
@@ -78,3 +82,31 @@ class TestMain:
         mock_run_migrations.assert_called_once()
         app_instance.add_error_handler.assert_called_once_with(error_handler)
         app_instance.run_polling.assert_called_once()
+        mock_run_webhook.assert_not_called()
+
+    @patch("app.main.run_webhook")
+    @patch("app.config.Settings.validate_event_type_configuration")
+    @patch("app.main.Application")
+    @patch("app.main.run_migrations")
+    @patch("app.main.setup_logging")
+    def test_starts_webhook_when_configured(
+        self,
+        mock_setup_logging,
+        mock_run_migrations,
+        mock_application,
+        mock_validate_event_types,
+        mock_run_webhook,
+        monkeypatch,
+    ):
+        monkeypatch.setattr("app.main.settings.telegram_delivery_mode", "webhook")
+        app_instance = MagicMock()
+        mock_application.builder.return_value.token.return_value.build.return_value = app_instance
+
+        main()
+
+        mock_setup_logging.assert_called_once()
+        mock_validate_event_types.assert_called_once_with()
+        mock_run_migrations.assert_called_once()
+        app_instance.add_error_handler.assert_called_once_with(error_handler)
+        app_instance.run_polling.assert_not_called()
+        mock_run_webhook.assert_called_once_with(app_instance, settings)

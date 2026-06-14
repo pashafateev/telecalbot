@@ -31,6 +31,13 @@ def test_config_defaults():
     assert settings.booking_conversation_timeout_seconds == 900
     assert settings.booking_conversation_reminder_seconds_before_timeout == 120
     assert settings.calcom_privacy_email is None
+    assert settings.telegram_delivery_mode == "polling"
+    assert settings.telegram_webhook_url is None
+    assert settings.telegram_webhook_path == "/telegram/webhook"
+    assert settings.telegram_webhook_listen == "0.0.0.0"
+    assert settings.telegram_webhook_port == 8080
+    assert settings.health_check_path == "/healthz"
+    assert settings.readiness_check_path == "/readyz"
 
 
 def test_config_accepts_privacy_email():
