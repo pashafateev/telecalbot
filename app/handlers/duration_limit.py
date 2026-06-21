@@ -12,14 +12,37 @@ logger = logging.getLogger(__name__)
 
 VALID_DURATIONS = (30, 60)
 
+# Optional trailing keyword on /setlimit choosing how long the limit lasts.
+# With no keyword the limit is one-time: it applies to the next booking only
+# and clears itself afterwards.
+ONGOING_KEYWORDS = {"постоянно", "навсегда", "always", "ongoing", "permanent"}
+ONE_TIME_KEYWORDS = {"разово", "разовый", "once", "onetime"}
+
+
+def _parse_scope(args: list[str]) -> tuple[list[str], bool]:
+    """Strip an optional trailing scope keyword.
+
+    Returns the remaining args and whether the limit is one-time (default True).
+    """
+    if args:
+        token = args[-1].lower()
+        if token in ONGOING_KEYWORDS:
+            return args[:-1], False
+        if token in ONE_TIME_KEYWORDS:
+            return args[:-1], True
+    return list(args), True
+
 
 @admin_only
 async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle /setlimit command to set a duration limit for a user.
 
-    Usage: /setlimit <telegram_id> <minutes>
-    Or reply to a user's message: /setlimit <minutes>
+    Usage: /setlimit <telegram_id> <minutes> [постоянно]
+    Or reply to a user's message: /setlimit <minutes> [постоянно]
+
+    Without a trailing keyword the limit is one-time (applies to the next
+    booking only). Add "постоянно" to make it ongoing until removed.
     """
     duration_limit_service: DurationLimitService = context.bot_data["duration_limit_service"]
 
@@ -30,28 +53,30 @@ async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else None
     )
 
+    args, one_time = _parse_scope(context.args or [])
+
     if reply_target:
         # /setlimit <minutes> (as reply)
-        if not context.args:
+        if not args:
             await update.message.reply_text("Использование: /setlimit <минуты> (в ответ на сообщение)")
             return
         try:
-            minutes = int(context.args[0])
+            minutes = int(args[0])
         except ValueError:
             await update.message.reply_text("Минуты должны быть числом.")
             return
         telegram_id = reply_target
     else:
         # /setlimit <telegram_id> <minutes>
-        if not context.args or len(context.args) < 2:
+        if len(args) < 2:
             await update.message.reply_text(
                 "Использование: /setlimit <telegram_id> <минуты>\n"
                 "Или ответьте на сообщение: /setlimit <минуты>"
             )
             return
         try:
-            telegram_id = int(context.args[0])
-            minutes = int(context.args[1])
+            telegram_id = int(args[0])
+            minutes = int(args[1])
         except ValueError:
             await update.message.reply_text("Telegram ID и минуты должны быть числами.")
             return
@@ -66,17 +91,21 @@ async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         telegram_id=telegram_id,
         max_duration_minutes=minutes,
         set_by=update.effective_user.id,
+        one_time=one_time,
     )
 
     logger.info(
-        "Admin %s set duration limit %d min for user %s",
+        "Admin %s set duration limit %d min (%s) for user %s",
         update.effective_user.id,
         minutes,
+        "one-time" if one_time else "ongoing",
         telegram_id,
     )
 
+    scope_label = "разовый (на одну запись)" if one_time else "постоянный"
     await update.message.reply_text(
-        f"Лимит установлен: пользователь {telegram_id} — максимум {minutes} мин."
+        f"Лимит установлен: пользователь {telegram_id} — максимум {minutes} мин. "
+        f"— {scope_label}."
     )
 
 
@@ -141,8 +170,10 @@ async def limits_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     lines = ["Установленные лимиты:\n"]
     for limit in limits:
+        scope_label = "разовый" if limit.get("one_time") else "постоянный"
         lines.append(
-            f"• ID {limit['telegram_id']} — макс. {limit['max_duration_minutes']} мин."
+            f"• ID {limit['telegram_id']} — макс. {limit['max_duration_minutes']} мин. "
+            f"({scope_label})"
         )
 
     await update.message.reply_text("\n".join(lines))

@@ -648,6 +648,18 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             booking.status,
         )
 
+        duration_limit_service: DurationLimitService | None = context.bot_data.get(
+            "duration_limit_service"
+        )
+        if (
+            duration_limit_service is not None
+            and duration_limit_service.consume_one_time_limit(update.effective_user.id)
+        ):
+            logger.info(
+                "Cleared one-time duration limit for user_id=%s after booking",
+                update.effective_user.id,
+            )
+
         formatted_time = _format_datetime_display(
             data["selected_date"],
             data["selected_time"],

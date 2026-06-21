@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS duration_limits (
     telegram_id INTEGER PRIMARY KEY,
     max_duration_minutes INTEGER NOT NULL,
     set_at TEXT NOT NULL,
-    set_by INTEGER NOT NULL
+    set_by INTEGER NOT NULL,
+    one_time INTEGER NOT NULL DEFAULT 0
 );
 
 -- Persisted bookings for /cancel_booking flow
@@ -72,6 +73,25 @@ def run_migrations(db: Database) -> None:
     initialize_schema(db)
     _migrate_bookings_time_columns(db)
     _ensure_bookings_indexes(db)
+    _ensure_duration_limit_scope(db)
+
+
+def _ensure_duration_limit_scope(db: Database) -> None:
+    """Add the one_time scope column to duration_limits for existing databases."""
+    table_exists = db.execute_one(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='duration_limits'"
+    )
+    if table_exists is None:
+        return
+
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(duration_limits)")}
+    if "one_time" in columns:
+        return
+
+    logger.info("Adding one_time column to duration_limits")
+    db.execute_write(
+        "ALTER TABLE duration_limits ADD COLUMN one_time INTEGER NOT NULL DEFAULT 0"
+    )
 
 
 def _migrate_bookings_time_columns(db: Database) -> None:
