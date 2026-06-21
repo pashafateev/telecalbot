@@ -651,14 +651,20 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         duration_limit_service: DurationLimitService | None = context.bot_data.get(
             "duration_limit_service"
         )
-        if (
-            duration_limit_service is not None
-            and duration_limit_service.consume_one_time_limit(update.effective_user.id)
-        ):
-            logger.info(
-                "Cleared one-time duration limit for user_id=%s after booking",
-                update.effective_user.id,
-            )
+        if duration_limit_service is not None:
+            # Booking already succeeded — never let cleanup failure surface as an
+            # error to the user, or they may retry and double-book.
+            try:
+                if duration_limit_service.consume_one_time_limit(update.effective_user.id):
+                    logger.info(
+                        "Cleared one-time duration limit for user_id=%s after booking",
+                        update.effective_user.id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to clear one-time duration limit for user_id=%s after booking",
+                    update.effective_user.id,
+                )
 
         formatted_time = _format_datetime_display(
             data["selected_date"],
