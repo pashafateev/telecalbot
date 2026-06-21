@@ -123,6 +123,36 @@ def _is_whitelisted(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return whitelist_service.is_whitelisted(user_id)
 
 
+def _get_duration_limit(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> int | None:
+    duration_limit_service: DurationLimitService | None = context.bot_data.get(
+        "duration_limit_service"
+    )
+    if duration_limit_service is None:
+        return None
+    return duration_limit_service.get_limit(user_id)
+
+
+def _apply_current_duration_limit(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    requested_duration: int,
+) -> int:
+    max_duration = _get_duration_limit(context, user_id)
+    if max_duration is None or requested_duration <= max_duration:
+        return requested_duration
+
+    logger.info(
+        "Capping booking duration for user_id=%s from %s to %s minutes",
+        user_id,
+        requested_duration,
+        max_duration,
+    )
+    return max_duration
+
+
 def _booking_reminder_job_name(user_id: int) -> str:
     return f"{BOOKING_REMINDER_JOB_PREFIX}{user_id}"
 
@@ -260,13 +290,7 @@ async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) 
     """Check duration limits and show duration picker or auto-select."""
     user_id = query.from_user.id
     _refresh_booking_timeout_reminder(context, user_id)
-    duration_limit_service: DurationLimitService | None = context.bot_data.get(
-        "duration_limit_service"
-    )
-
-    max_duration = None
-    if duration_limit_service:
-        max_duration = duration_limit_service.get_limit(user_id)
+    max_duration = _get_duration_limit(context, user_id)
 
     if max_duration is not None:
         # User has a limit — auto-select that duration, skip picker
@@ -296,6 +320,7 @@ async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if duration not in DURATION_OPTIONS:
         return BookingState.SELECTING_DURATION
 
+    duration = _apply_current_duration_limit(context, query.from_user.id, duration)
     context.user_data["duration"] = duration
     _refresh_booking_timeout_reminder(context, query.from_user.id)
 
@@ -331,7 +356,12 @@ async def _show_availability(
 
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     timezone_id = context.user_data["timezone"]
-    duration = context.user_data.get("duration", 30)
+    duration = _apply_current_duration_limit(
+        context,
+        query.from_user.id,
+        context.user_data.get("duration", 30),
+    )
+    context.user_data["duration"] = duration
     event_type_id = settings.get_event_type_id(duration)
     today = date.today()
 
@@ -566,7 +596,12 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = context.user_data
     calcom_client: CalComClient = context.bot_data["calcom_client"]
     email = data.get("email") or f"telegram-{update.effective_user.id}@telecalbot.local"
-    duration = data.get("duration", 30)
+    duration = _apply_current_duration_limit(
+        context,
+        update.effective_user.id,
+        data.get("duration", 30),
+    )
+    data["duration"] = duration
     event_type_id = settings.get_event_type_id(duration)
 
     try:

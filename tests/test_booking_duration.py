@@ -65,6 +65,28 @@ class TestDurationSelection:
         assert mock_context.user_data["duration"] == 60
 
     @pytest.mark.asyncio
+    async def test_select_duration_caps_stale_callback_for_limited_user(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "duration:60"
+        mock_calcom = AsyncMock()
+        mock_calcom.get_availability = AsyncMock(return_value=MagicMock(slots={}))
+        mock_duration_service = MagicMock(spec=DurationLimitService)
+        mock_duration_service.get_limit.return_value = 30
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom,
+            "duration_limit_service": mock_duration_service,
+        }
+        mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            await select_duration(mock_update_with_query, mock_context)
+
+        assert mock_context.user_data["duration"] == 30
+        mock_settings.get_event_type_id.assert_called_once_with(30)
+
+    @pytest.mark.asyncio
     async def test_select_duration_proceeds_to_availability(self, mock_update_with_query, mock_context):
         mock_update_with_query.callback_query.data = "duration:30"
         mock_calcom = AsyncMock()
