@@ -730,6 +730,30 @@ class TestConfirmBooking:
         assert "telegram_user_id" in request.metadata
 
     @pytest.mark.asyncio
+    async def test_applies_current_duration_limit_when_confirming(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {**user_data_ready, "duration": 60}
+        mock_calcom_client.create_booking.return_value = booking_response
+        duration_limit_service = MagicMock()
+        duration_limit_service.get_limit.return_value = 30
+        mock_context.bot_data["duration_limit_service"] = duration_limit_service
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        mock_settings.get_event_type_id.assert_called_once_with(30)
+        request = mock_calcom_client.create_booking.call_args[0][0]
+        assert request.eventTypeId == 30
+
+    @pytest.mark.asyncio
     async def test_returns_conversation_end_on_success(
         self,
         mock_update_with_query,
