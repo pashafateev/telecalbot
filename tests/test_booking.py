@@ -754,6 +754,80 @@ class TestConfirmBooking:
         assert request.eventTypeId == 30
 
     @pytest.mark.asyncio
+    async def test_consumes_one_time_limit_after_successful_booking(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {**user_data_ready, "duration": 30}
+        mock_calcom_client.create_booking.return_value = booking_response
+        duration_limit_service = MagicMock()
+        duration_limit_service.get_limit.return_value = 30
+        mock_context.bot_data["duration_limit_service"] = duration_limit_service
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        duration_limit_service.consume_one_time_limit.assert_called_once_with(12345)
+
+    @pytest.mark.asyncio
+    async def test_does_not_consume_limit_when_booking_fails(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {**user_data_ready, "duration": 30}
+        mock_calcom_client.create_booking.side_effect = CalComAPIError(
+            status_code=409, message="conflict"
+        )
+        duration_limit_service = MagicMock()
+        duration_limit_service.get_limit.return_value = 30
+        mock_context.bot_data["duration_limit_service"] = duration_limit_service
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        duration_limit_service.consume_one_time_limit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_time_cleanup_failure_still_confirms_booking(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        from telegram.ext import ConversationHandler
+
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {**user_data_ready, "duration": 30}
+        mock_calcom_client.create_booking.return_value = booking_response
+        duration_limit_service = MagicMock()
+        duration_limit_service.get_limit.return_value = 30
+        duration_limit_service.consume_one_time_limit.side_effect = Exception("db locked")
+        mock_context.bot_data["duration_limit_service"] = duration_limit_service
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        # Cal.com already accepted the booking; a cleanup failure must not turn
+        # into a "try again" error that risks a duplicate booking.
+        assert result == ConversationHandler.END
+        final_message = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
+        assert "подтверждена" in final_message.lower() or "готово" in final_message.lower()
+
+    @pytest.mark.asyncio
     async def test_returns_conversation_end_on_success(
         self,
         mock_update_with_query,
