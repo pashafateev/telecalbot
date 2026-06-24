@@ -2,6 +2,7 @@
 
 import logging
 from functools import wraps
+from typing import Awaitable, Callable, cast
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,20 +12,22 @@ from app.services.whitelist import WhitelistService
 
 logger = logging.getLogger(__name__)
 
+AdminHandler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 
-def admin_only(func):
+
+def admin_only(func: AdminHandler) -> AdminHandler:
     """Decorator to restrict handler to admin user only."""
 
     @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         if user_id != settings.admin_telegram_id:
             logger.warning(f"Unauthorized admin access attempt by user {user_id}")
             await update.message.reply_text("You are not authorized to use this command.")
             return
-        return await func(update, context)
+        await func(update, context)
 
-    return wrapper
+    return cast(AdminHandler, wrapper)
 
 
 @admin_only

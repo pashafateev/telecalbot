@@ -207,6 +207,33 @@ class TestApproveRequest:
         assert request is not None
         assert request.status == "approved"
 
+    def test_rolls_back_whitelist_when_status_update_fails(self, whitelist_service):
+        """Whitelist insert and request approval are one atomic operation."""
+        whitelist_service.create_access_request(
+            telegram_id=123,
+            display_name="Test User",
+            username="testuser",
+        )
+        whitelist_service.db.execute_write(
+            """
+            CREATE TRIGGER fail_approved_status_update
+            BEFORE UPDATE OF status ON access_requests
+            WHEN new.status = 'approved'
+            BEGIN
+                SELECT RAISE(ABORT, 'status update failed');
+            END
+            """
+        )
+
+        with pytest.raises(Exception, match="status update failed"):
+            whitelist_service.approve_request(123, approved_by=789)
+
+        assert whitelist_service.is_whitelisted(123) is False
+
+        request = whitelist_service.get_access_request(123)
+        assert request is not None
+        assert request.status == "pending"
+
 
 class TestRejectRequest:
     """Tests for reject_request method."""
