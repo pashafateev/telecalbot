@@ -15,6 +15,7 @@ from app.handlers.booking import (
     booking_timeout,
     build_availability_keyboard,
     build_cancel_booking_keyboard,
+    build_duration_keyboard,
     build_timezone_keyboard,
     cancel,
     cancel_booking_back,
@@ -195,6 +196,17 @@ class TestBuildTimezoneKeyboard:
         assert len(tz_buttons) == len(RUSSIAN_TIMEZONES)
 
 
+class TestBuildDurationKeyboard:
+    def test_has_timezone_change_button(self):
+        keyboard = build_duration_keyboard()
+        all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+
+        assert any(
+            btn.text == "Часовой пояс" and btn.callback_data == "change_tz"
+            for btn in all_buttons
+        )
+
+
 class TestBuildAvailabilityKeyboard:
     def test_shows_day_headers(self, availability_response):
         keyboard = build_availability_keyboard(availability_response.slots)
@@ -333,6 +345,56 @@ class TestBookCommand:
         call_kwargs = mock_update.message.reply_text.call_args[1]
         assert "reply_markup" in call_kwargs
 
+    @pytest.mark.asyncio
+    async def test_skips_timezone_selection_for_returning_user(
+        self, mock_update, mock_context
+    ):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        preference_service = MagicMock()
+        preference_service.get_timezone.return_value = MagicMock(timezone="Europe/Moscow")
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+        mock_context.bot_data["user_preference_service"] = preference_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+        assert mock_context.user_data["timezone"] == "Europe/Moscow"
+        assert mock_context.user_data["offset_days"] == 0
+        message_text = mock_update.message.reply_text.call_args[0][0]
+        assert "Europe/Moscow" in message_text
+        all_buttons = [
+            btn
+            for row in mock_update.message.reply_text.call_args[1]["reply_markup"].inline_keyboard
+            for btn in row
+        ]
+        assert any(btn.callback_data == "change_tz" for btn in all_buttons)
+
+    @pytest.mark.asyncio
+    async def test_returning_user_with_duration_limit_goes_to_availability(
+        self, mock_update, mock_context, mock_calcom_client, availability_response
+    ):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        preference_service = MagicMock()
+        preference_service.get_timezone.return_value = MagicMock(timezone="Europe/Moscow")
+        duration_service = MagicMock()
+        duration_service.get_limit.return_value = 30
+        mock_calcom_client.get_availability.return_value = availability_response
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+        mock_context.bot_data["user_preference_service"] = preference_service
+        mock_context.bot_data["duration_limit_service"] = duration_service
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id = MagicMock(return_value=42)
+            result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.VIEWING_AVAILABILITY
+        assert mock_context.user_data["timezone"] == "Europe/Moscow"
+        assert mock_context.user_data["duration"] == 30
+        mock_calcom_client.get_availability.assert_called_once()
+        assert mock_calcom_client.get_availability.call_args.kwargs["timezone"] == "Europe/Moscow"
+
 
 class TestSelectTimezone:
     @pytest.mark.asyncio
@@ -340,6 +402,7 @@ class TestSelectTimezone:
         self, mock_update_with_query, mock_context, mock_calcom_client, availability_response
     ):
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_update_with_query.callback_query.from_user.id = 12345
         mock_calcom_client.get_availability.return_value = availability_response
 
         with patch("app.handlers.booking.settings") as mock_settings:
@@ -347,6 +410,22 @@ class TestSelectTimezone:
             await select_timezone(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["timezone"] == "Europe/Moscow"
+
+    @pytest.mark.asyncio
+    async def test_persists_selected_timezone(
+        self, mock_update_with_query, mock_context, mock_calcom_client
+    ):
+        preference_service = MagicMock()
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_update_with_query.callback_query.from_user.id = 12345
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom_client,
+            "user_preference_service": preference_service,
+        }
+
+        await select_timezone(mock_update_with_query, mock_context)
+
+        preference_service.set_timezone.assert_called_once_with(12345, "Europe/Moscow")
 
     @pytest.mark.asyncio
     async def test_returns_selecting_duration_when_no_limit(
