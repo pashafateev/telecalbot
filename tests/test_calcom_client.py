@@ -149,6 +149,39 @@ class TestCalComClient:
             mock_request.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_get_availability_uses_current_slots_endpoint_version(self, client):
+        """Availability requests pin the API version required by /v2/slots."""
+        mock_response = {
+            "status": "success",
+            "data": {
+                "2026-01-01": [{"start": "2026-01-01T10:00:00.000+03:00"}],
+            },
+        }
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            result = await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+            )
+
+        method, path = mock_request.call_args.args
+        kwargs = mock_request.call_args.kwargs
+        assert method == "GET"
+        assert path == "/slots"
+        assert kwargs["api_version"] == CalComClient.SLOTS_API_VERSION
+        assert kwargs["params"] == {
+            "eventTypeId": 123,
+            "start": "2026-01-01",
+            "end": "2026-01-07",
+            "timeZone": "Europe/Moscow",
+        }
+        assert result.slots["2026-01-01"][0].time == "2026-01-01T10:00:00.000+03:00"
+
+    @pytest.mark.asyncio
     async def test_get_availability_uses_cache(self, client):
         """Second call with same params uses cached response."""
         mock_response = {
@@ -286,6 +319,7 @@ class TestCalComClient:
             assert isinstance(result, BookingResponse)
             assert result.id == 123
             assert result.status == "accepted"
+            assert mock_request.call_args.kwargs["api_version"] == CalComClient.BOOKINGS_API_VERSION
 
     @pytest.mark.asyncio
     async def test_create_booking_clears_cache(self, client):
@@ -360,11 +394,15 @@ class TestCalComClient:
             assert mock_request.call_count == 1
 
             mock_request.return_value = {"status": "success", "data": {}}
-            await client.cancel_booking(123)
+            await client.cancel_booking("booking_uid_123")
 
             method, path = mock_request.call_args_list[1][0]
             assert method == "POST"
-            assert path == "/bookings/123/cancel"
+            assert path == "/bookings/booking_uid_123/cancel"
+            assert (
+                mock_request.call_args_list[1].kwargs["api_version"]
+                == CalComClient.BOOKINGS_API_VERSION
+            )
 
             mock_request.return_value = avail_response
             await client.get_availability(
@@ -421,6 +459,37 @@ class TestCalComClientRetry:
             assert result == {"status": "success", "data": {"ok": True}}
             assert mock_request.call_count == 2
             mock_sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    async def test_uses_retry_after_header_for_rate_limits(self, client):
+        request = httpx.Request("GET", "https://api.cal.com/v2/test")
+        rate_limited = httpx.Response(
+            429,
+            text="rate limited",
+            headers={"Retry-After": "2"},
+            request=request,
+        )
+
+        with (
+            patch.object(client._client, "request", new_callable=AsyncMock) as mock_request,
+            patch("app.services.calcom_client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            mock_request.side_effect = [
+                httpx.HTTPStatusError(
+                    message="rate limited",
+                    request=request,
+                    response=rate_limited,
+                ),
+                httpx.Response(
+                    200,
+                    request=request,
+                    json={"status": "success", "data": {"ok": True}},
+                ),
+            ]
+
+            await client._request("GET", "/test")
+
+        mock_sleep.assert_awaited_once_with(2.0)
 
     @pytest.mark.asyncio
     async def test_does_not_retry_non_retryable_status(self, client):
