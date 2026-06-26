@@ -8,6 +8,13 @@ primary_region = 'fra'
 
 [env]
 DATABASE_PATH = "/data/telecalbot.db"
+TELEGRAM_DELIVERY_MODE = "webhook"
+TELEGRAM_WEBHOOK_URL = "https://telecalbot.fly.dev/telegram/webhook"
+TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
+TELEGRAM_WEBHOOK_LISTEN = "0.0.0.0"
+TELEGRAM_WEBHOOK_PORT = "8080"
+HEALTH_CHECK_PATH = "/healthz"
+READINESS_CHECK_PATH = "/readyz"
 
 [processes]
 app = "/app/.venv/bin/python -m app.main"
@@ -15,10 +22,17 @@ app = "/app/.venv/bin/python -m app.main"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'off'
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ['app']
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
 
 [[mounts]]
   source = "telecalbot_data"

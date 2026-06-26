@@ -59,7 +59,7 @@ Cal.com is blocked in some regions (like Russia), preventing users from accessin
 
 4. **Run the bot**
    ```bash
-   # Run instructions coming soon
+   uv run python -m app.main
    ```
 
 ## Configuration
@@ -69,7 +69,52 @@ Required environment variables:
 - `CALCOM_API_KEY` - Your Cal.com API key
 - `ADMIN_TELEGRAM_ID` - Your Telegram user ID for admin access
 
+Delivery mode:
+- `TELEGRAM_DELIVERY_MODE=polling` is the default and is intended for local development.
+- `TELEGRAM_DELIVERY_MODE=webhook` starts an HTTP server for Telegram webhooks and health checks.
+- `TELEGRAM_WEBHOOK_URL` is required in webhook mode.
+- `TELEGRAM_WEBHOOK_SECRET_TOKEN` is optional locally and recommended in production.
+
 See `.env.sample` for a complete list of configuration options.
+
+## Deployment
+
+Fly runs the bot in webhook mode on port `8080`. The configured production webhook endpoint is:
+
+```text
+https://telecalbot.fly.dev/telegram/webhook
+```
+
+Set production secrets before deploying:
+
+```bash
+fly secrets set \
+  TELEGRAM_BOT_TOKEN=<telegram-bot-token> \
+  CALCOM_API_KEY=<calcom-api-key> \
+  ADMIN_TELEGRAM_ID=<telegram-admin-id> \
+  TELEGRAM_WEBHOOK_SECRET_TOKEN=<random-secret-token>
+```
+
+Deploy the app:
+
+```bash
+fly deploy --remote-only
+```
+
+After deploy, register the webhook with Telegram. The application also calls `setWebhook` on startup, but this command is useful for explicit verification:
+
+```bash
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -d "url=https://telecalbot.fly.dev/telegram/webhook" \
+  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET_TOKEN}"
+```
+
+Check runtime health:
+
+```bash
+curl https://telecalbot.fly.dev/healthz
+curl https://telecalbot.fly.dev/readyz
+```
 
 ## Development Status
 

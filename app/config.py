@@ -1,5 +1,8 @@
 """Application configuration loaded from environment variables."""
 
+from typing import Literal
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -30,7 +33,28 @@ class Settings(BaseSettings):
     booking_conversation_timeout_seconds: int = 900
     booking_conversation_reminder_seconds_before_timeout: int = 120
 
+    # Telegram Delivery Settings
+    telegram_delivery_mode: Literal["polling", "webhook"] = "polling"
+    telegram_webhook_url: str | None = None
+    telegram_webhook_secret_token: str | None = None
+    telegram_webhook_path: str = "/telegram/webhook"
+    telegram_webhook_listen: str = "0.0.0.0"
+    telegram_webhook_port: int = 8080
+    telegram_drop_pending_updates: bool = False
+
+    # HTTP Health Settings
+    health_check_path: str = "/healthz"
+    readiness_check_path: str = "/readyz"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @field_validator("telegram_webhook_url", "telegram_webhook_secret_token", mode="before")
+    @classmethod
+    def blank_optional_webhook_value_is_unset(cls, value: object) -> object:
+        """Treat blank env values for optional webhook settings as unset."""
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     def get_event_type_id(self, duration_minutes: int) -> int:
         """Get the event type ID for a given duration, with fallback.
