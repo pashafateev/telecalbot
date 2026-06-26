@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -46,6 +47,14 @@ class Settings(BaseSettings):
     readiness_check_path: str = "/readyz"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @field_validator("telegram_webhook_url", "telegram_webhook_secret_token", mode="before")
+    @classmethod
+    def blank_optional_webhook_value_is_unset(cls, value: object) -> object:
+        """Treat blank env values for optional webhook settings as unset."""
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     def get_event_type_id(self, duration_minutes: int) -> int:
         """Get the event type ID for a given duration, with fallback.

@@ -24,6 +24,15 @@ def normalize_route_path(path: str) -> str:
     return "/" if normalized == "/" else normalized
 
 
+def normalize_optional_token(token: str | None) -> str | None:
+    """Return None for blank optional secret-token settings."""
+    if token is None:
+        return None
+    if token.strip() == "":
+        return None
+    return token
+
+
 class HealthHandler(tornado.web.RequestHandler):
     """Liveness endpoint for Fly HTTP health checks."""
 
@@ -73,13 +82,20 @@ class TelegramWebhookHandler(tornado.web.RequestHandler):
 
         try:
             payload = json.loads(self.request.body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise tornado.web.HTTPError(
                 HTTPStatus.BAD_REQUEST,
                 reason="Request body is not valid JSON",
             ) from exc
 
-        update = Update.de_json(payload, self.telegram_application.bot)
+        try:
+            update = Update.de_json(payload, self.telegram_application.bot)
+        except Exception as exc:
+            raise tornado.web.HTTPError(
+                HTTPStatus.BAD_REQUEST,
+                reason="Request body is not a valid Telegram update",
+            ) from exc
+
         if update:
             bot = self.telegram_application.bot
             if hasattr(bot, "insert_callback_data"):
@@ -121,6 +137,7 @@ def build_webhook_application(
     webhook_route = normalize_route_path(webhook_path)
     health_route = normalize_route_path(health_path)
     readiness_route = normalize_route_path(readiness_path)
+    normalized_secret_token = normalize_optional_token(secret_token)
 
     return tornado.web.Application(
         [
@@ -129,7 +146,7 @@ def build_webhook_application(
             (
                 rf"{webhook_route}/?",
                 TelegramWebhookHandler,
-                {"telegram_application": application, "secret_token": secret_token},
+                {"telegram_application": application, "secret_token": normalized_secret_token},
             ),
         ]
     )
@@ -145,12 +162,13 @@ async def serve_webhook(application: Application, app_settings: Settings) -> Non
     if not app_settings.telegram_webhook_url:
         raise ValueError("TELEGRAM_WEBHOOK_URL is required when TELEGRAM_DELIVERY_MODE=webhook")
 
+    secret_token = normalize_optional_token(app_settings.telegram_webhook_secret_token)
     readiness = asyncio.Event()
     stop_event = asyncio.Event()
     web_app = build_webhook_application(
         application=application,
         readiness=readiness,
-        secret_token=app_settings.telegram_webhook_secret_token,
+        secret_token=secret_token,
         webhook_path=app_settings.telegram_webhook_path,
         health_path=app_settings.health_check_path,
         readiness_path=app_settings.readiness_check_path,
@@ -177,7 +195,7 @@ async def serve_webhook(application: Application, app_settings: Settings) -> Non
         await application.bot.set_webhook(
             url=app_settings.telegram_webhook_url,
             drop_pending_updates=app_settings.telegram_drop_pending_updates,
-            secret_token=app_settings.telegram_webhook_secret_token,
+            secret_token=secret_token,
         )
         await application.start()
         readiness.set()

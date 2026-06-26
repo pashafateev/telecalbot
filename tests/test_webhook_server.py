@@ -89,3 +89,54 @@ async def test_webhook_requires_secret_and_enqueues_update():
     assert accepted.status_code == 200
     assert accepted.json() == {"status": "accepted"}
     assert update.update_id == 123
+
+
+@pytest.mark.asyncio
+async def test_blank_webhook_secret_is_treated_as_unset():
+    update_queue = asyncio.Queue()
+    application = SimpleNamespace(bot=MagicMock(), update_queue=update_queue)
+    web_app = build_webhook_application(
+        application=application,
+        readiness=asyncio.Event(),
+        secret_token="",
+        webhook_path="/telegram/webhook",
+        health_path="/healthz",
+        readiness_path="/readyz",
+    )
+
+    async with LocalServer(web_app) as base_url:
+        async with httpx.AsyncClient() as client:
+            accepted = await client.post(
+                f"{base_url}/telegram/webhook",
+                json={"update_id": 456},
+            )
+
+    update = update_queue.get_nowait()
+
+    assert accepted.status_code == 200
+    assert accepted.json() == {"status": "accepted"}
+    assert update.update_id == 456
+
+
+@pytest.mark.asyncio
+async def test_malformed_telegram_update_returns_bad_request():
+    update_queue = asyncio.Queue()
+    application = SimpleNamespace(bot=MagicMock(), update_queue=update_queue)
+    web_app = build_webhook_application(
+        application=application,
+        readiness=asyncio.Event(),
+        secret_token=None,
+        webhook_path="/telegram/webhook",
+        health_path="/healthz",
+        readiness_path="/readyz",
+    )
+
+    async with LocalServer(web_app) as base_url:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{base_url}/telegram/webhook",
+                json={"message": {}},
+            )
+
+    assert response.status_code == 400
+    assert update_queue.empty()

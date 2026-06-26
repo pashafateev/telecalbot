@@ -38,6 +38,19 @@ def test_config_defaults():
     assert settings.readiness_check_path == "/readyz"
 
 
+def test_blank_optional_webhook_settings_are_unset():
+    """Test that blank optional webhook values behave like unset values."""
+    from app.config import Settings
+
+    settings = Settings(
+        telegram_webhook_url="",
+        telegram_webhook_secret_token="",
+    )
+
+    assert settings.telegram_webhook_url is None
+    assert settings.telegram_webhook_secret_token is None
+
+
 def test_get_event_type_id_with_duration_specific():
     """Test get_event_type_id returns duration-specific IDs."""
     from app.config import Settings
