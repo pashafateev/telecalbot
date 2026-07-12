@@ -144,6 +144,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             assert isinstance(result, AvailabilityResponse)
@@ -204,6 +205,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Second call with same params
@@ -212,6 +214,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Only one API call should be made
@@ -236,6 +239,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             await client.get_availability(
@@ -243,6 +247,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 8),  # Different date
                 end_date=date(2026, 1, 14),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Two API calls should be made
@@ -269,6 +274,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Wait for cache to expire
@@ -279,6 +285,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Two API calls should be made after cache expired
@@ -307,6 +314,7 @@ class TestCalComClient:
             request = BookingRequest(
                 eventTypeId=123,
                 start="2026-01-01T10:00:00Z",
+                lengthInMinutes=60,
                 attendee=Attendee(
                     name="Test User",
                     email="test@example.com",
@@ -349,6 +357,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 1
 
@@ -358,6 +367,7 @@ class TestCalComClient:
                 BookingRequest(
                     eventTypeId=123,
                     start="2026-01-01T10:00:00Z",
+                    lengthInMinutes=60,
                     attendee=Attendee(
                         name="Test",
                         email="test@example.com",
@@ -374,6 +384,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 3  # Cache was cleared
 
@@ -389,6 +400,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 1
 
@@ -405,6 +417,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 3
 

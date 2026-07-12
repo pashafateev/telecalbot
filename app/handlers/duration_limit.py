@@ -10,7 +10,7 @@ from app.services.duration_limit import DurationLimitService
 
 logger = logging.getLogger(__name__)
 
-VALID_DURATIONS = (30, 60)
+VALID_DURATIONS = (30, 60, 120)
 
 
 @admin_only

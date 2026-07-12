@@ -51,6 +51,7 @@ def test_get_event_type_id_fallback():
     settings = Settings(calcom_event_type_id=99)
     assert settings.get_event_type_id(30) == 99
     assert settings.get_event_type_id(60) == 99
+    assert settings.get_event_type_id(120) == 99
 
 
 def test_get_event_type_id_unknown_duration():

@@ -203,7 +203,7 @@ class TestFifthStepAcknowledgement:
             for row in call.kwargs["reply_markup"].inline_keyboard
             for button in row
         ]
-        assert button_texts == ["30 минут", "60 минут", "120 минут"]
+        assert button_texts == ["30 минут", "60 минут", "120 минут", "Отмена"]
 
 
 class TestSelectDurationValidation:
@@ -329,6 +329,7 @@ class TestDurationInConfirmation:
         }
         text = _build_confirmation_text(data)
         assert "30 минут" in text
+        assert "только для работы по 5-му шагу" not in text
 
     def test_confirmation_text_repeats_fifth_step_warning_for_120_minutes(self):
         from app.handlers.booking import _build_confirmation_text
@@ -345,3 +346,14 @@ class TestDurationInConfirmation:
 
         assert "120 минут" in text
         assert "только для работы по 5-му шагу" in text
+
+
+def test_duration_state_registers_fifth_step_warning_callbacks():
+    handler = booking_handler.create_booking_conversation_handler()
+    callbacks = {
+        callback.callback
+        for callback in handler.states[BookingState.SELECTING_DURATION]
+    }
+
+    assert booking_handler.acknowledge_fifth_step_duration in callbacks
+    assert booking_handler.change_duration in callbacks

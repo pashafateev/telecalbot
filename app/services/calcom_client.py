@@ -51,6 +51,7 @@ class BookingRequest(BaseModel):
 
     eventTypeId: int
     start: str  # ISO 8601 UTC datetime
+    lengthInMinutes: int
     attendee: Attendee
     metadata: dict[str, Any] = {}
 
@@ -117,6 +118,7 @@ class CalComClient:
         start_date: date,
         end_date: date,
         timezone: str,
+        duration_minutes: int,
     ) -> AvailabilityResponse:
         """Get available time slots for an event type.
 
@@ -125,6 +127,7 @@ class CalComClient:
             start_date: Start date for availability search.
             end_date: End date for availability search.
             timezone: User's timezone (e.g., "Europe/Moscow").
+            duration_minutes: Required duration for each returned slot.
 
         Returns:
             AvailabilityResponse with available slots grouped by date.
@@ -132,7 +135,7 @@ class CalComClient:
         Raises:
             CalComAPIError: If API request fails.
         """
-        cache_key = (event_type_id, start_date, end_date, timezone)
+        cache_key = (event_type_id, start_date, end_date, timezone, duration_minutes)
 
         # Check cache
         if cache_key in self._availability_cache:
@@ -152,6 +155,7 @@ class CalComClient:
                 "startTime": f"{start_date}T00:00:00Z",
                 "endTime": f"{end_date}T23:59:59Z",
                 "timeZone": timezone,
+                "duration": duration_minutes,
             },
         )
 
