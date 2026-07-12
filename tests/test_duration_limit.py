@@ -128,6 +128,16 @@ class TestSetlimitCommand:
         assert duration_limit_service.get_limit(777) == 60
 
     @pytest.mark.asyncio
+    async def test_sets_120_minute_limit(
+        self, mock_update, mock_context, duration_limit_service
+    ):
+        mock_context.args = ["555", "120"]
+
+        await setlimit_command(mock_update, mock_context)
+
+        assert duration_limit_service.get_limit(555) == 120
+
+    @pytest.mark.asyncio
     async def test_rejects_invalid_duration(self, mock_update, mock_context):
         mock_context.args = ["555", "45"]
         await setlimit_command(mock_update, mock_context)

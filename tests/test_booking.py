@@ -724,6 +724,7 @@ class TestConfirmBooking:
         mock_calcom_client.create_booking.assert_called_once()
         request = mock_calcom_client.create_booking.call_args[0][0]
         assert request.eventTypeId == 42
+        assert request.lengthInMinutes == 30
         assert request.attendee.name == "Alice"
         assert request.attendee.email == "alice@example.com"
         assert request.attendee.timeZone == "Europe/Moscow"
@@ -752,6 +753,7 @@ class TestConfirmBooking:
         mock_settings.get_event_type_id.assert_called_once_with(30)
         request = mock_calcom_client.create_booking.call_args[0][0]
         assert request.eventTypeId == 30
+        assert request.lengthInMinutes == 30
 
     @pytest.mark.asyncio
     async def test_returns_conversation_end_on_success(

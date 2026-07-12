@@ -65,6 +65,31 @@ class TestDurationSelection:
         assert mock_context.user_data["duration"] == 60
 
     @pytest.mark.asyncio
+    async def test_select_duration_120_requires_fifth_step_acknowledgement(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "duration:120"
+        mock_calcom = AsyncMock()
+        mock_context.bot_data = {"calcom_client": mock_calcom}
+        mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
+
+        result = await select_duration(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+        assert mock_context.user_data["pending_duration"] == 120
+        mock_calcom.get_availability.assert_not_called()
+        warning_call = mock_update_with_query.callback_query.edit_message_text.call_args
+        warning_text = warning_call.args[0]
+        assert "двухчасовые встречи" in warning_text
+        assert "5-му шагу" in warning_text
+        button_texts = [
+            button.text
+            for row in warning_call.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        assert button_texts == ["Продолжить (5-й шаг)", "Изменить длительность"]
+
+    @pytest.mark.asyncio
     async def test_select_duration_caps_stale_callback_for_limited_user(
         self, mock_update_with_query, mock_context
     ):
@@ -150,6 +175,25 @@ class TestDurationLimitAutoSelect:
         assert mock_context.user_data["duration"] == 30
 
     @pytest.mark.asyncio
+    async def test_120_minute_limit_requires_fifth_step_acknowledgement(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_calcom = AsyncMock()
+        mock_duration_service = MagicMock(spec=DurationLimitService)
+        mock_duration_service.get_limit.return_value = 120
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom,
+            "duration_limit_service": mock_duration_service,
+        }
+
+        result = await select_timezone(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+        assert mock_context.user_data["pending_duration"] == 120
+        mock_calcom.get_availability.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_unlimited_user_sees_picker(self, mock_update_with_query, mock_context):
         """User without a limit should see the duration picker."""
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
@@ -205,3 +249,19 @@ class TestDurationInConfirmation:
         }
         text = _build_confirmation_text(data)
         assert "30 минут" in text
+
+    def test_confirmation_text_repeats_fifth_step_warning_for_120_minutes(self):
+        from app.handlers.booking import _build_confirmation_text
+
+        data = {
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+            "name": "Alice",
+            "duration": 120,
+        }
+
+        text = _build_confirmation_text(data)
+
+        assert "120 минут" in text
+        assert "только для работы по 5-му шагу" in text

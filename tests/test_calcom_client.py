@@ -82,6 +82,7 @@ class TestBookingModels:
         request = BookingRequest(
             eventTypeId=123,
             start="2026-01-01T10:00:00Z",
+            lengthInMinutes=120,
             attendee=Attendee(
                 name="Test User",
                 email="test@example.com",
@@ -90,6 +91,7 @@ class TestBookingModels:
             metadata={"telegram_user_id": "12345"},
         )
         assert request.eventTypeId == 123
+        assert request.lengthInMinutes == 120
         assert request.metadata["telegram_user_id"] == "12345"
 
     def test_booking_response_model(self):
@@ -147,6 +149,37 @@ class TestCalComClient:
             assert isinstance(result, AvailabilityResponse)
             assert len(result.slots) == 1
             mock_request.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_availability_sends_requested_duration(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+
+            await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+                duration_minutes=120,
+            )
+
+        assert mock_request.call_args.kwargs["params"]["duration"] == 120
+
+    @pytest.mark.asyncio
+    async def test_availability_cache_separates_durations(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+
+            for duration in (60, 120):
+                await client.get_availability(
+                    event_type_id=123,
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 1, 7),
+                    timezone="Europe/Moscow",
+                    duration_minutes=duration,
+                )
+
+        assert mock_request.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_availability_uses_cache(self, client):
