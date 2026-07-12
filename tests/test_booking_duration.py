@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.handlers import booking as booking_handler
 from app.handlers.booking import (
     BookingState,
     select_duration,
@@ -124,6 +125,85 @@ class TestDurationSelection:
             result = await select_duration(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
+
+
+class TestFifthStepAcknowledgement:
+    @pytest.mark.asyncio
+    async def test_acknowledgement_fetches_120_minute_availability(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "duration_120_confirm"
+        mock_calcom = AsyncMock()
+        mock_calcom.get_availability.return_value = MagicMock(slots={})
+        mock_context.bot_data = {"calcom_client": mock_calcom}
+        mock_context.user_data = {
+            "timezone": "Europe/Moscow",
+            "offset_days": 0,
+            "pending_duration": 120,
+        }
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id.return_value = 42
+            result = await booking_handler.acknowledge_fifth_step_duration(
+                mock_update_with_query, mock_context
+            )
+
+        assert result == BookingState.VIEWING_AVAILABILITY
+        assert mock_context.user_data["duration"] == 120
+        assert "pending_duration" not in mock_context.user_data
+        assert mock_calcom.get_availability.call_args.kwargs["duration_minutes"] == 120
+
+    @pytest.mark.asyncio
+    async def test_acknowledgement_reapplies_a_lowered_duration_limit(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "duration_120_confirm"
+        mock_calcom = AsyncMock()
+        mock_calcom.get_availability.return_value = MagicMock(slots={})
+        mock_duration_service = MagicMock(spec=DurationLimitService)
+        mock_duration_service.get_limit.return_value = 60
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom,
+            "duration_limit_service": mock_duration_service,
+        }
+        mock_context.user_data = {
+            "timezone": "Europe/Moscow",
+            "offset_days": 0,
+            "pending_duration": 120,
+        }
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id.side_effect = lambda duration: duration
+            await booking_handler.acknowledge_fifth_step_duration(
+                mock_update_with_query, mock_context
+            )
+
+        assert mock_context.user_data["duration"] == 60
+        assert mock_calcom.get_availability.call_args.kwargs["duration_minutes"] == 60
+
+    @pytest.mark.asyncio
+    async def test_change_duration_returns_to_all_allowed_options(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "change_duration"
+        mock_duration_service = MagicMock(spec=DurationLimitService)
+        mock_duration_service.get_limit.return_value = 120
+        mock_context.bot_data = {"duration_limit_service": mock_duration_service}
+        mock_context.user_data = {"pending_duration": 120}
+
+        result = await booking_handler.change_duration(
+            mock_update_with_query, mock_context
+        )
+
+        assert result == BookingState.SELECTING_DURATION
+        assert "pending_duration" not in mock_context.user_data
+        call = mock_update_with_query.callback_query.edit_message_text.call_args
+        button_texts = [
+            button.text
+            for row in call.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        assert button_texts == ["30 минут", "60 минут", "120 минут"]
 
 
 class TestSelectDurationValidation:
