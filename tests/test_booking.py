@@ -751,6 +751,28 @@ class TestConfirmBooking:
         assert request.lengthInMinutes is None
 
     @pytest.mark.asyncio
+    async def test_missing_event_mapping_shows_booking_error(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            error = ValueError("No event type ID configured")
+            mock_settings.get_event_type_id.side_effect = error
+            mock_settings.resolve_event_type.side_effect = error
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == BookingState.VIEWING_AVAILABILITY
+        mock_calcom_client.create_booking.assert_not_called()
+        message = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
+        assert "что-то пошло не так" in message
+
+    @pytest.mark.asyncio
     async def test_applies_current_duration_limit_when_confirming(
         self,
         mock_update_with_query,
