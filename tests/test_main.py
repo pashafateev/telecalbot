@@ -38,7 +38,26 @@ class TestErrorHandler:
 class TestMain:
     """Tests for main application wiring."""
 
-    @patch("app.main.settings.validate_event_type_configuration")
+    @patch("app.config.Settings.validate_event_type_configuration")
+    @patch("app.main.run_migrations")
+    @patch("app.main.setup_logging")
+    def test_invalid_event_type_config_fails_before_migrations(
+        self,
+        mock_setup_logging,
+        mock_run_migrations,
+        mock_validate_event_types,
+    ):
+        mock_validate_event_types.side_effect = ValueError(
+            "No event type ID configured for 120-minute duration"
+        )
+
+        with pytest.raises(ValueError, match="120-minute"):
+            main()
+
+        mock_setup_logging.assert_called_once_with()
+        mock_run_migrations.assert_not_called()
+
+    @patch("app.config.Settings.validate_event_type_configuration")
     @patch("app.main.Application")
     @patch("app.main.run_migrations")
     @patch("app.main.setup_logging")

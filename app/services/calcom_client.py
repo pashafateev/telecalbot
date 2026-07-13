@@ -51,7 +51,7 @@ class BookingRequest(BaseModel):
 
     eventTypeId: int
     start: str  # ISO 8601 UTC datetime
-    lengthInMinutes: int
+    lengthInMinutes: int | None = None
     attendee: Attendee
     metadata: dict[str, Any] = {}
 
@@ -118,7 +118,7 @@ class CalComClient:
         start_date: date,
         end_date: date,
         timezone: str,
-        duration_minutes: int,
+        duration_minutes: int | None,
     ) -> AvailabilityResponse:
         """Get available time slots for an event type.
 
@@ -127,7 +127,7 @@ class CalComClient:
             start_date: Start date for availability search.
             end_date: End date for availability search.
             timezone: User's timezone (e.g., "Europe/Moscow").
-            duration_minutes: Required duration for each returned slot.
+            duration_minutes: Duration override, or None for fixed-duration event types.
 
         Returns:
             AvailabilityResponse with available slots grouped by date.
@@ -147,16 +147,19 @@ class CalComClient:
         logger.debug("Cache miss for availability: %s", cache_key)
 
         # Fetch from API
+        params = {
+            "eventTypeId": event_type_id,
+            "startTime": f"{start_date}T00:00:00Z",
+            "endTime": f"{end_date}T23:59:59Z",
+            "timeZone": timezone,
+        }
+        if duration_minutes is not None:
+            params["duration"] = duration_minutes
+
         response = await self._request(
             "GET",
             "/slots/available",
-            params={
-                "eventTypeId": event_type_id,
-                "startTime": f"{start_date}T00:00:00Z",
-                "endTime": f"{end_date}T23:59:59Z",
-                "timeZone": timezone,
-                "duration": duration_minutes,
-            },
+            params=params,
         )
 
         data = AvailabilityResponse.model_validate(response["data"])
@@ -178,7 +181,7 @@ class CalComClient:
         response = await self._request(
             "POST",
             "/bookings",
-            json=request.model_dump(),
+            json=request.model_dump(exclude_none=True),
         )
 
         # Clear availability cache on successful booking

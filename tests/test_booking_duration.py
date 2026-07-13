@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import ResolvedEventType
 from app.handlers import booking as booking_handler
 from app.handlers.booking import (
     BookingState,
@@ -11,6 +12,15 @@ from app.handlers.booking import (
     select_timezone,
 )
 from app.services.duration_limit import DurationLimitService
+
+
+def _resolved_event_type(
+    duration_minutes: int, event_type_id: int = 42
+) -> ResolvedEventType:
+    return ResolvedEventType(
+        event_type_id=event_type_id,
+        duration_minutes=duration_minutes,
+    )
 
 
 @pytest.fixture
@@ -46,7 +56,7 @@ class TestDurationSelection:
         mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id = MagicMock(return_value=42)
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
             await select_duration(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["duration"] == 30
@@ -60,7 +70,9 @@ class TestDurationSelection:
         mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id = MagicMock(return_value=99)
+            mock_settings.resolve_event_type.side_effect = lambda duration: (
+                _resolved_event_type(duration, event_type_id=99)
+            )
             await select_duration(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["duration"] == 60
@@ -106,11 +118,13 @@ class TestDurationSelection:
         mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id = MagicMock(side_effect=lambda duration: duration)
+            mock_settings.resolve_event_type.side_effect = lambda duration: (
+                _resolved_event_type(duration, event_type_id=duration)
+            )
             await select_duration(mock_update_with_query, mock_context)
 
         assert mock_context.user_data["duration"] == 30
-        mock_settings.get_event_type_id.assert_called_once_with(30)
+        mock_settings.resolve_event_type.assert_called_once_with(30)
 
     @pytest.mark.asyncio
     async def test_select_duration_proceeds_to_availability(self, mock_update_with_query, mock_context):
@@ -121,7 +135,7 @@ class TestDurationSelection:
         mock_context.user_data = {"timezone": "Europe/Moscow", "offset_days": 0}
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id = MagicMock(return_value=42)
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
             result = await select_duration(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
@@ -137,7 +151,6 @@ class TestDurationSelection:
 
         with patch("app.handlers.booking.settings") as mock_settings:
             error = ValueError("No event type ID configured")
-            mock_settings.get_event_type_id.side_effect = error
             mock_settings.resolve_event_type.side_effect = error
             result = await select_duration(mock_update_with_query, mock_context)
 
@@ -163,7 +176,7 @@ class TestFifthStepAcknowledgement:
         }
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id.return_value = 42
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
             result = await booking_handler.acknowledge_fifth_step_duration(
                 mock_update_with_query, mock_context
             )
@@ -193,7 +206,9 @@ class TestFifthStepAcknowledgement:
         }
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id.side_effect = lambda duration: duration
+            mock_settings.resolve_event_type.side_effect = lambda duration: (
+                _resolved_event_type(duration, event_type_id=duration)
+            )
             await booking_handler.acknowledge_fifth_step_duration(
                 mock_update_with_query, mock_context
             )
@@ -283,7 +298,7 @@ class TestDurationLimitAutoSelect:
         }
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id = MagicMock(return_value=42)
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
             result = await select_timezone(mock_update_with_query, mock_context)
 
         assert result == BookingState.VIEWING_AVAILABILITY
@@ -305,7 +320,7 @@ class TestDurationLimitAutoSelect:
         mock_context.user_data = {"pending_duration": 120}
 
         with patch("app.handlers.booking.settings") as mock_settings:
-            mock_settings.get_event_type_id.return_value = 42
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
             await select_timezone(mock_update_with_query, mock_context)
 
         assert "pending_duration" not in mock_context.user_data

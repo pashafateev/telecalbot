@@ -60,8 +60,11 @@ TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
 
 DURATION_OPTIONS = {30: "30 минут", 60: "60 минут", 120: "120 минут"}
+FIFTH_STEP_RESTRICTION_TEXT = (
+    "двухчасовые встречи предназначены только для работы по 5-му шагу."
+)
 FIFTH_STEP_WARNING_TEXT = (
-    "Важно: двухчасовые встречи предназначены только для работы по 5-му шагу.\n\n"
+    f"Важно: {FIFTH_STEP_RESTRICTION_TEXT}\n\n"
     "Если вы записываетесь не для 5-го шага, пожалуйста, выберите длительность "
     "30 или 60 минут."
 )
@@ -303,6 +306,7 @@ async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) 
         if max_duration == 120:
             return await _show_fifth_step_warning(query, context)
         # User has a limit — auto-select that duration, skip picker
+        context.user_data.pop("pending_duration", None)
         context.user_data["duration"] = max_duration
         return await _show_availability(query, context, offset_days=0)
 
@@ -431,16 +435,16 @@ async def _show_availability(
         context.user_data.get("duration", 30),
     )
     context.user_data["duration"] = duration
-    event_type_id = settings.get_event_type_id(duration)
     today = date.today()
 
     try:
+        resolved_event_type = settings.resolve_event_type(duration)
         availability = await calcom_client.get_availability(
-            event_type_id=event_type_id,
+            event_type_id=resolved_event_type.event_type_id,
             start_date=today + timedelta(days=offset_days),
             end_date=today + timedelta(days=offset_days + 14),
             timezone=timezone_id,
-            duration_minutes=duration,
+            duration_minutes=resolved_event_type.duration_minutes,
         )
 
         has_slots = any(availability.slots.values())
@@ -467,7 +471,12 @@ async def _show_availability(
         )
         return BookingState.VIEWING_AVAILABILITY
 
-    except CalComAPIError:
+    except (CalComAPIError, ValueError):
+        logger.exception(
+            "Failed to load availability for user_id=%s duration=%s",
+            query.from_user.id,
+            duration,
+        )
         await _safe_edit_message_text(
             query,
             "Извините, не удалось загрузить расписание. Попробуйте ещё раз.",
@@ -625,7 +634,7 @@ def _build_confirmation_text(data: dict) -> str:
     duration_text = DURATION_OPTIONS.get(duration, f"{duration} мин.")
     email_line = f"\nEmail: {data['email']}" if data.get("email") else ""
     fifth_step_warning = (
-        "\n\nВажно: двухчасовые встречи предназначены только для работы по 5-му шагу."
+        f"\n\nВажно: {FIFTH_STEP_RESTRICTION_TEXT}"
         if duration == 120
         else ""
     )
@@ -678,23 +687,23 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         data.get("duration", 30),
     )
     data["duration"] = duration
-    event_type_id = settings.get_event_type_id(duration)
 
     try:
+        resolved_event_type = settings.resolve_event_type(duration)
         start_utc = slot_to_utc(data["selected_time"])
         logger.info(
             "Creating booking for user_id=%s event_type_id=%s start_utc=%s timezone=%s",
             update.effective_user.id,
-            event_type_id,
+            resolved_event_type.event_type_id,
             start_utc,
             data.get("timezone"),
         )
 
         booking = await calcom_client.create_booking(
             BookingRequest(
-                eventTypeId=event_type_id,
+                eventTypeId=resolved_event_type.event_type_id,
                 start=start_utc,
-                lengthInMinutes=duration,
+                lengthInMinutes=resolved_event_type.duration_minutes,
                 attendee=Attendee(
                     name=data["name"],
                     email=email,
