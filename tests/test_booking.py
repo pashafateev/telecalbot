@@ -731,6 +731,26 @@ class TestConfirmBooking:
         assert "telegram_user_id" in request.metadata
 
     @pytest.mark.asyncio
+    async def test_fixed_duration_event_omits_booking_length_override(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = user_data_ready
+        mock_calcom_client.create_booking.return_value = booking_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id.return_value = 42
+            await confirm_booking(mock_update_with_query, mock_context)
+
+        request = mock_calcom_client.create_booking.call_args.args[0]
+        assert request.lengthInMinutes is None
+
+    @pytest.mark.asyncio
     async def test_applies_current_duration_limit_when_confirming(
         self,
         mock_update_with_query,

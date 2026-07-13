@@ -205,6 +205,21 @@ class TestFifthStepAcknowledgement:
         ]
         assert button_texts == ["30 минут", "60 минут", "120 минут", "Отмена"]
 
+    @pytest.mark.asyncio
+    async def test_stale_acknowledgement_without_pending_duration_returns_to_picker(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "duration_120_confirm"
+        mock_context.user_data = {"timezone": "Europe/Moscow"}
+
+        result = await booking_handler.acknowledge_fifth_step_duration(
+            mock_update_with_query, mock_context
+        )
+
+        assert result == BookingState.SELECTING_DURATION
+        call_text = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
+        assert "длительность" in call_text.lower()
+
 
 class TestSelectDurationValidation:
     """Tests for invalid callback data in duration selection."""
@@ -253,6 +268,27 @@ class TestDurationLimitAutoSelect:
 
         assert result == BookingState.VIEWING_AVAILABILITY
         assert mock_context.user_data["duration"] == 30
+
+    @pytest.mark.asyncio
+    async def test_limited_user_auto_select_clears_pending_duration(
+        self, mock_update_with_query, mock_context
+    ):
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_calcom = AsyncMock()
+        mock_calcom.get_availability.return_value = MagicMock(slots={})
+        mock_duration_service = MagicMock(spec=DurationLimitService)
+        mock_duration_service.get_limit.return_value = 60
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom,
+            "duration_limit_service": mock_duration_service,
+        }
+        mock_context.user_data = {"pending_duration": 120}
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.get_event_type_id.return_value = 42
+            await select_timezone(mock_update_with_query, mock_context)
+
+        assert "pending_duration" not in mock_context.user_data
 
     @pytest.mark.asyncio
     async def test_120_minute_limit_requires_fifth_step_acknowledgement(

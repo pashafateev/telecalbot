@@ -44,6 +44,21 @@ def test_get_event_type_id_with_duration_specific():
     assert settings.get_event_type_id(60) == 60
 
 
+def test_resolve_event_type_omits_duration_for_specific_event():
+    from app.config import Settings
+
+    settings = Settings(
+        calcom_event_type_id=1,
+        calcom_event_type_id_30=30,
+        calcom_event_type_id_60=60,
+    )
+
+    resolved = settings.resolve_event_type(30)
+
+    assert resolved.event_type_id == 30
+    assert resolved.duration_minutes is None
+
+
 def test_get_event_type_id_fallback():
     """Test get_event_type_id falls back to calcom_event_type_id."""
     from app.config import Settings
@@ -52,6 +67,30 @@ def test_get_event_type_id_fallback():
     assert settings.get_event_type_id(30) == 99
     assert settings.get_event_type_id(60) == 99
     assert settings.get_event_type_id(120) == 99
+
+
+def test_resolve_event_type_includes_duration_for_shared_event():
+    from app.config import Settings
+
+    settings = Settings(calcom_event_type_id=99)
+
+    resolved = settings.resolve_event_type(120)
+
+    assert resolved.event_type_id == 99
+    assert resolved.duration_minutes == 120
+
+
+def test_validate_event_type_configuration_requires_120_minute_mapping():
+    from app.config import Settings
+
+    settings = Settings(
+        calcom_event_type_id=None,
+        calcom_event_type_id_30=30,
+        calcom_event_type_id_60=60,
+    )
+
+    with pytest.raises(ValueError, match="120-minute"):
+        settings.validate_event_type_configuration()
 
 
 def test_get_event_type_id_unknown_duration():

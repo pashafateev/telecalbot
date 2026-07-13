@@ -38,11 +38,16 @@ class TestErrorHandler:
 class TestMain:
     """Tests for main application wiring."""
 
+    @patch("app.main.settings.validate_event_type_configuration")
     @patch("app.main.Application")
     @patch("app.main.run_migrations")
     @patch("app.main.setup_logging")
     def test_registers_error_handler_and_starts_polling(
-        self, mock_setup_logging, mock_run_migrations, mock_application
+        self,
+        mock_setup_logging,
+        mock_run_migrations,
+        mock_application,
+        mock_validate_event_types,
     ):
         app_instance = MagicMock()
         mock_application.builder.return_value.token.return_value.build.return_value = app_instance
@@ -50,6 +55,7 @@ class TestMain:
         main()
 
         mock_setup_logging.assert_called_once()
+        mock_validate_event_types.assert_called_once_with()
         mock_run_migrations.assert_called_once()
         app_instance.add_error_handler.assert_called_once_with(error_handler)
         app_instance.run_polling.assert_called_once()
