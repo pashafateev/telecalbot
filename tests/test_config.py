@@ -1,6 +1,7 @@
 """Tests for configuration loading."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -91,6 +92,20 @@ def test_validate_event_type_configuration_requires_120_minute_mapping():
 
     with pytest.raises(ValueError, match="120-minute"):
         settings.validate_event_type_configuration()
+
+
+def test_validate_event_type_configuration_uses_supported_duration_constant():
+    from app.config import Settings
+
+    settings = Settings(calcom_event_type_id=99)
+
+    with (
+        patch("app.config.SUPPORTED_BOOKING_DURATIONS", (45,)),
+        patch.object(Settings, "resolve_event_type") as mock_resolve_event_type,
+    ):
+        settings.validate_event_type_configuration()
+
+    mock_resolve_event_type.assert_called_once_with(45)
 
 
 def test_get_event_type_id_unknown_duration():
