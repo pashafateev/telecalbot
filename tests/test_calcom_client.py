@@ -82,6 +82,7 @@ class TestBookingModels:
         request = BookingRequest(
             eventTypeId=123,
             start="2026-01-01T10:00:00Z",
+            lengthInMinutes=120,
             attendee=Attendee(
                 name="Test User",
                 email="test@example.com",
@@ -90,7 +91,22 @@ class TestBookingModels:
             metadata={"telegram_user_id": "12345"},
         )
         assert request.eventTypeId == 123
+        assert request.lengthInMinutes == 120
         assert request.metadata["telegram_user_id"] == "12345"
+
+    def test_booking_request_allows_no_duration_override(self):
+        request = BookingRequest(
+            eventTypeId=123,
+            start="2026-01-01T10:00:00Z",
+            lengthInMinutes=None,
+            attendee=Attendee(
+                name="Test User",
+                email="test@example.com",
+                timeZone="Europe/Moscow",
+            ),
+        )
+
+        assert request.lengthInMinutes is None
 
     def test_booking_response_model(self):
         """Parse booking response from Cal.com API."""
@@ -142,11 +158,58 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             assert isinstance(result, AvailabilityResponse)
             assert len(result.slots) == 1
             mock_request.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_availability_sends_requested_duration(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+
+            await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+                duration_minutes=120,
+            )
+
+        assert mock_request.call_args.kwargs["params"]["duration"] == 120
+
+    @pytest.mark.asyncio
+    async def test_get_availability_omits_duration_without_override(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+
+            await client.get_availability(
+                event_type_id=123,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 7),
+                timezone="Europe/Moscow",
+                duration_minutes=None,
+            )
+
+        assert "duration" not in mock_request.call_args.kwargs["params"]
+
+    @pytest.mark.asyncio
+    async def test_availability_cache_separates_durations(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+
+            for duration in (60, 120):
+                await client.get_availability(
+                    event_type_id=123,
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 1, 7),
+                    timezone="Europe/Moscow",
+                    duration_minutes=duration,
+                )
+
+        assert mock_request.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_availability_uses_cache(self, client):
@@ -171,6 +234,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Second call with same params
@@ -179,6 +243,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Only one API call should be made
@@ -203,6 +268,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             await client.get_availability(
@@ -210,6 +276,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 8),  # Different date
                 end_date=date(2026, 1, 14),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Two API calls should be made
@@ -236,6 +303,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Wait for cache to expire
@@ -246,6 +314,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
 
             # Two API calls should be made after cache expired
@@ -274,6 +343,7 @@ class TestCalComClient:
             request = BookingRequest(
                 eventTypeId=123,
                 start="2026-01-01T10:00:00Z",
+                lengthInMinutes=60,
                 attendee=Attendee(
                     name="Test User",
                     email="test@example.com",
@@ -286,6 +356,36 @@ class TestCalComClient:
             assert isinstance(result, BookingResponse)
             assert result.id == 123
             assert result.status == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_create_booking_omits_none_duration_override(self, client):
+        mock_response = {
+            "status": "success",
+            "data": {
+                "id": 123,
+                "uid": "abc-123",
+                "title": "Step work",
+                "start": "2026-01-01T10:00:00.000Z",
+                "end": "2026-01-01T10:30:00.000Z",
+                "status": "accepted",
+            },
+        }
+        request = BookingRequest(
+            eventTypeId=123,
+            start="2026-01-01T10:00:00Z",
+            lengthInMinutes=None,
+            attendee=Attendee(
+                name="Test User",
+                email="test@example.com",
+                timeZone="Europe/Moscow",
+            ),
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+            await client.create_booking(request)
+
+        assert "lengthInMinutes" not in mock_request.call_args.kwargs["json"]
 
     @pytest.mark.asyncio
     async def test_create_booking_clears_cache(self, client):
@@ -316,6 +416,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 1
 
@@ -325,6 +426,7 @@ class TestCalComClient:
                 BookingRequest(
                     eventTypeId=123,
                     start="2026-01-01T10:00:00Z",
+                    lengthInMinutes=60,
                     attendee=Attendee(
                         name="Test",
                         email="test@example.com",
@@ -341,6 +443,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 3  # Cache was cleared
 
@@ -356,6 +459,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 1
 
@@ -372,6 +476,7 @@ class TestCalComClient:
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
                 timezone="Europe/Moscow",
+                duration_minutes=60,
             )
             assert mock_request.call_count == 3
 

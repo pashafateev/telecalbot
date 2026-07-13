@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from app.config import settings
-from app.constants import RUSSIAN_TIMEZONES
+from app.constants import RUSSIAN_TIMEZONES, SUPPORTED_BOOKING_DURATIONS
 from app.services.booking_service import BookingService
 from app.services.calcom_client import (
     Attendee,
@@ -59,7 +59,19 @@ RUSSIAN_MONTHS_ABBR = [
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
 
-DURATION_OPTIONS = {30: "30 минут", 60: "60 минут"}
+DURATION_OPTIONS = {
+    minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS
+}
+FIFTH_STEP_RESTRICTION_TEXT = (
+    "двухчасовые встречи предназначены только для работы по 5-му шагу."
+)
+FIFTH_STEP_WARNING_TEXT = (
+    f"Важно: {FIFTH_STEP_RESTRICTION_TEXT}\n\n"
+    "Если вы записываетесь не для 5-го шага, пожалуйста, выберите длительность "
+    "30 или 60 минут."
+)
+FIFTH_STEP_CONFIRM_CALLBACK = "duration_120_confirm"
+CHANGE_DURATION_CALLBACK = "change_duration"
 CANCEL_SELECT_PREFIX = "cancel_booking_select:"
 CANCEL_CONFIRM_PREFIX = "cancel_booking_confirm:"
 CANCEL_BACK_CALLBACK = "cancel_booking_back"
@@ -293,12 +305,20 @@ async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) 
     max_duration = _get_duration_limit(context, user_id)
 
     if max_duration is not None:
+        if max_duration == 120:
+            return await _show_fifth_step_warning(query, context)
         # User has a limit — auto-select that duration, skip picker
+        context.user_data.pop("pending_duration", None)
         context.user_data["duration"] = max_duration
         return await _show_availability(query, context, offset_days=0)
 
-    # No limit — show duration selection
-    keyboard = build_duration_keyboard()
+    return await _show_duration_picker(query, context)
+
+
+async def _show_duration_picker(query, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show durations allowed by the user's current limit."""
+    max_duration = _get_duration_limit(context, query.from_user.id)
+    keyboard = build_duration_keyboard(max_duration=max_duration)
     await _safe_edit_message_text(
         query,
         "Выберите длительность встречи:",
@@ -321,10 +341,65 @@ async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return BookingState.SELECTING_DURATION
 
     duration = _apply_current_duration_limit(context, query.from_user.id, duration)
-    context.user_data["duration"] = duration
     _refresh_booking_timeout_reminder(context, query.from_user.id)
 
+    if duration == 120:
+        return await _show_fifth_step_warning(query, context)
+
+    context.user_data["duration"] = duration
+    context.user_data.pop("pending_duration", None)
     return await _show_availability(query, context, offset_days=0)
+
+
+async def _show_fifth_step_warning(query, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Require acknowledgement before showing 120-minute availability."""
+    context.user_data.pop("duration", None)
+    context.user_data["pending_duration"] = 120
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Продолжить (5-й шаг)",
+                    callback_data=FIFTH_STEP_CONFIRM_CALLBACK,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Изменить длительность",
+                    callback_data=CHANGE_DURATION_CALLBACK,
+                )
+            ],
+        ]
+    )
+    await _safe_edit_message_text(query, FIFTH_STEP_WARNING_TEXT, reply_markup=keyboard)
+    return BookingState.SELECTING_DURATION
+
+
+async def acknowledge_fifth_step_duration(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Continue to availability after acknowledging fifth-step-only usage."""
+    query = update.callback_query
+    await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
+
+    if context.user_data.get("pending_duration") != 120:
+        return await _show_duration_picker(query, context)
+
+    duration = _apply_current_duration_limit(context, query.from_user.id, 120)
+    context.user_data.pop("pending_duration", None)
+    context.user_data["duration"] = duration
+    return await _show_availability(query, context, offset_days=0)
+
+
+async def change_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Return from the fifth-step warning to duration selection."""
+    query = update.callback_query
+    await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
+    context.user_data.pop("pending_duration", None)
+    context.user_data.pop("duration", None)
+    return await _show_duration_picker(query, context)
 
 
 async def change_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -362,15 +437,16 @@ async def _show_availability(
         context.user_data.get("duration", 30),
     )
     context.user_data["duration"] = duration
-    event_type_id = settings.get_event_type_id(duration)
     today = date.today()
 
     try:
+        resolved_event_type = settings.resolve_event_type(duration)
         availability = await calcom_client.get_availability(
-            event_type_id=event_type_id,
+            event_type_id=resolved_event_type.event_type_id,
             start_date=today + timedelta(days=offset_days),
             end_date=today + timedelta(days=offset_days + 14),
             timezone=timezone_id,
+            duration_minutes=resolved_event_type.duration_minutes,
         )
 
         has_slots = any(availability.slots.values())
@@ -397,7 +473,12 @@ async def _show_availability(
         )
         return BookingState.VIEWING_AVAILABILITY
 
-    except CalComAPIError:
+    except (CalComAPIError, ValueError):
+        logger.exception(
+            "Failed to load availability for user_id=%s duration=%s",
+            query.from_user.id,
+            duration,
+        )
         await _safe_edit_message_text(
             query,
             "Извините, не удалось загрузить расписание. Попробуйте ещё раз.",
@@ -554,12 +635,18 @@ def _build_confirmation_text(data: dict) -> str:
     duration = data.get("duration", 30)
     duration_text = DURATION_OPTIONS.get(duration, f"{duration} мин.")
     email_line = f"\nEmail: {data['email']}" if data.get("email") else ""
+    fifth_step_warning = (
+        f"\n\nВажно: {FIFTH_STEP_RESTRICTION_TEXT}"
+        if duration == 120
+        else ""
+    )
     return (
         f"Подтвердите запись:\n\n"
         f"Время: {formatted_time}\n"
         f"Длительность: {duration_text}\n"
         f"Имя: {data['name']}"
-        f"{email_line}\n\n"
+        f"{email_line}"
+        f"{fifth_step_warning}\n\n"
         f"Нажмите «Подтвердить запись» для продолжения."
     )
 
@@ -602,22 +689,23 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         data.get("duration", 30),
     )
     data["duration"] = duration
-    event_type_id = settings.get_event_type_id(duration)
 
     try:
+        resolved_event_type = settings.resolve_event_type(duration)
         start_utc = slot_to_utc(data["selected_time"])
         logger.info(
             "Creating booking for user_id=%s event_type_id=%s start_utc=%s timezone=%s",
             update.effective_user.id,
-            event_type_id,
+            resolved_event_type.event_type_id,
             start_utc,
             data.get("timezone"),
         )
 
         booking = await calcom_client.create_booking(
             BookingRequest(
-                eventTypeId=event_type_id,
+                eventTypeId=resolved_event_type.event_type_id,
                 start=start_utc,
+                lengthInMinutes=resolved_event_type.duration_minutes,
                 attendee=Attendee(
                     name=data["name"],
                     email=email,
@@ -931,11 +1019,12 @@ def build_timezone_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def build_duration_keyboard() -> InlineKeyboardMarkup:
+def build_duration_keyboard(max_duration: int | None = None) -> InlineKeyboardMarkup:
     """Build duration selection keyboard."""
     buttons = [
         [InlineKeyboardButton(label, callback_data=f"duration:{minutes}")]
         for minutes, label in DURATION_OPTIONS.items()
+        if max_duration is None or minutes <= max_duration
     ]
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(buttons)
@@ -1100,6 +1189,11 @@ def create_booking_conversation_handler() -> ConversationHandler:
             ],
             BookingState.SELECTING_DURATION: [
                 CallbackQueryHandler(select_duration, pattern="^duration:"),
+                CallbackQueryHandler(
+                    acknowledge_fifth_step_duration,
+                    pattern=f"^{FIFTH_STEP_CONFIRM_CALLBACK}$",
+                ),
+                CallbackQueryHandler(change_duration, pattern=f"^{CHANGE_DURATION_CALLBACK}$"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             BookingState.VIEWING_AVAILABILITY: [

@@ -1,5 +1,7 @@
 """Constants used throughout the application."""
 
+SUPPORTED_BOOKING_DURATIONS = (30, 60, 120)
+
 # Russian timezones sorted by UTC offset
 RUSSIAN_TIMEZONES = [
     ("Europe/Kaliningrad", "Калининград (UTC+2)"),

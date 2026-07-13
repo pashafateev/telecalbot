@@ -66,6 +66,8 @@ def main() -> None:
 
     logger.info("Initializing Telecalbot...")
 
+    settings.validate_event_type_configuration()
+
     # Initialize database
     run_migrations(db)
     logger.info(f"Database initialized at {settings.database_path}")
