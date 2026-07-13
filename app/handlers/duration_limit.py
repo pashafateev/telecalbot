@@ -5,13 +5,11 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.constants import SUPPORTED_BOOKING_DURATIONS
 from app.handlers.admin import admin_only
 from app.services.duration_limit import DurationLimitService
 
 logger = logging.getLogger(__name__)
-
-VALID_DURATIONS = (30, 60, 120)
-
 
 @admin_only
 async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -56,9 +54,10 @@ async def setlimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await update.message.reply_text("Telegram ID и минуты должны быть числами.")
             return
 
-    if minutes not in VALID_DURATIONS:
+    if minutes not in SUPPORTED_BOOKING_DURATIONS:
         await update.message.reply_text(
-            f"Допустимые значения: {', '.join(str(d) for d in VALID_DURATIONS)} минут."
+            "Допустимые значения: "
+            f"{', '.join(str(d) for d in SUPPORTED_BOOKING_DURATIONS)} минут."
         )
         return
 

@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from app.config import settings
-from app.constants import RUSSIAN_TIMEZONES
+from app.constants import RUSSIAN_TIMEZONES, SUPPORTED_BOOKING_DURATIONS
 from app.services.booking_service import BookingService
 from app.services.calcom_client import (
     Attendee,
@@ -59,7 +59,9 @@ RUSSIAN_MONTHS_ABBR = [
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
 
-DURATION_OPTIONS = {30: "30 минут", 60: "60 минут", 120: "120 минут"}
+DURATION_OPTIONS = {
+    minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS
+}
 FIFTH_STEP_RESTRICTION_TEXT = (
     "двухчасовые встречи предназначены только для работы по 5-му шагу."
 )

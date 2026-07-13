@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from pydantic_settings import BaseSettings
 
+from app.constants import SUPPORTED_BOOKING_DURATIONS
+
 
 @dataclass(frozen=True)
 class ResolvedEventType:
@@ -77,7 +79,7 @@ class Settings(BaseSettings):
 
     def validate_event_type_configuration(self) -> None:
         """Fail startup unless every supported duration can be resolved."""
-        for duration_minutes in (30, 60, 120):
+        for duration_minutes in SUPPORTED_BOOKING_DURATIONS:
             self.resolve_event_type(duration_minutes)
 
 
