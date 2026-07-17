@@ -738,7 +738,9 @@ class TestConfirmBooking:
         assert request.attendee.name == "Alice"
         assert request.attendee.email == "alice@example.com"
         assert request.attendee.timeZone == "Europe/Moscow"
-        assert "telegram_user_id" in request.metadata
+        assert request.metadata["telecalbot_booking_ref"].startswith("tbk_")
+        assert "telegram_user_id" not in request.metadata
+        assert "12345" not in str(request.metadata)
 
     @pytest.mark.asyncio
     async def test_fixed_duration_event_omits_booking_length_override(
@@ -874,7 +876,7 @@ class TestConfirmBooking:
         )
 
     @pytest.mark.asyncio
-    async def test_uses_placeholder_email_when_none(
+    async def test_uses_configured_privacy_email_and_opaque_reference_when_none(
         self,
         mock_update_with_query,
         mock_context,
@@ -894,11 +896,84 @@ class TestConfirmBooking:
 
         with patch("app.handlers.booking.settings") as mock_settings:
             mock_settings.resolve_event_type.side_effect = _resolved_event_type
+            mock_settings.calcom_privacy_email = "private-bookings@example.net"
             await confirm_booking(mock_update_with_query, mock_context)
 
         request = mock_calcom_client.create_booking.call_args[0][0]
-        assert "12345" in request.attendee.email
-        assert "telecalbot.local" in request.attendee.email
+        assert request.attendee.email == "private-bookings@example.net"
+        assert "telecalbot.local" not in request.attendee.email
+        assert request.metadata["telecalbot_booking_ref"].startswith("tbk_")
+        assert "12345" not in str(request.metadata)
+        mock_context.bot_data["booking_service"].save_booking.assert_called_once_with(
+            12345,
+            booking_response,
+            internal_ref=request.metadata["telecalbot_booking_ref"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_privacy_email_offers_personal_email_without_calling_calcom(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {
+            "name": "Alice",
+            "email": None,
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
+            mock_settings.calcom_privacy_email = None
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == BookingState.EMAIL_DECISION
+        mock_calcom_client.create_booking.assert_not_called()
+        message = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
+        assert "без личного email временно недоступна" in message
+        keyboard = mock_update_with_query.callback_query.edit_message_text.call_args.kwargs[
+            "reply_markup"
+        ]
+        callbacks = {
+            button.callback_data
+            for row in keyboard.inline_keyboard
+            for button in row
+        }
+        assert callbacks == {"email_yes", "cancel"}
+
+    @pytest.mark.asyncio
+    async def test_rejected_privacy_email_does_not_strand_booking_flow(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {
+            "name": "Alice",
+            "email": None,
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+        mock_calcom_client.create_booking.side_effect = CalComAPIError(
+            400,
+            "captured response",
+            code="email_domain_cannot_receive_mail",
+        )
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
+            mock_settings.calcom_privacy_email = "private-bookings@example.net"
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == BookingState.EMAIL_DECISION
+        message = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
+        assert "без личного email временно недоступна" in message
 
     @pytest.mark.asyncio
     async def test_handles_409_conflict(
@@ -1119,6 +1194,36 @@ class TestBookingTimeoutReminderLifecycle:
         assert call_kwargs["when"] == 780
         assert call_kwargs["data"] == {"user_id": 12345}
         assert call_kwargs["name"] == "booking_timeout_reminder:12345"
+
+    @pytest.mark.asyncio
+    async def test_book_command_restart_clears_stale_state_and_replaces_reminder(
+        self, mock_update, mock_context
+    ):
+        mock_context.user_data = {
+            "timezone": "Europe/Moscow",
+            "offset_days": 10,
+            "duration": 60,
+            "pending_duration": 120,
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "name": "Stale name",
+            "email": "stale@example.com",
+            "internal_ref": "tbk_stale",
+            "unrelated": "keep",
+        }
+        previous_reminder_job = MagicMock()
+        mock_context.job_queue = MagicMock()
+        mock_context.job_queue.get_jobs_by_name.return_value = [previous_reminder_job]
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.booking_conversation_reminder_seconds_before_timeout = 120
+            result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        assert mock_context.user_data == {"unrelated": "keep"}
+        previous_reminder_job.schedule_removal.assert_called_once()
+        mock_context.job_queue.run_once.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_select_slot_refreshes_existing_timeout_reminder(
@@ -1382,6 +1487,11 @@ class TestCreateBookingHandler:
         assert ConversationHandler.TIMEOUT in handler.states
         timeout_handlers = handler.states[ConversationHandler.TIMEOUT]
         assert len(timeout_handlers) == 1
+
+    def test_allows_book_command_to_restart_active_conversation(self):
+        handler = create_booking_conversation_handler()
+
+        assert handler.allow_reentry is True
 
 
 class TestLoadMoreDates:

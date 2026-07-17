@@ -27,6 +27,11 @@ def test_schema_initialization(temp_db_path):
     assert "user_preferences" in table_names
     assert "bookings" in table_names
 
+    booking_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(bookings)")
+    }
+    assert "internal_ref" in booking_columns
+
 
 def test_whitelist_insert_and_query(temp_db_path):
     """Test inserting and querying whitelist entries."""
@@ -131,3 +136,4 @@ def test_migrates_bookings_start_end_columns(temp_db_path):
     row = db.execute_one("SELECT start_at, end_at FROM bookings WHERE telegram_id = ?", (123,))
     assert row["start_at"] == "2026-01-01T10:00:00Z"
     assert row["end_at"] == "2026-01-01T11:00:00Z"
+    assert "internal_ref" in columns

@@ -30,6 +30,15 @@ def test_config_defaults():
     assert settings.log_level == "INFO"
     assert settings.booking_conversation_timeout_seconds == 900
     assert settings.booking_conversation_reminder_seconds_before_timeout == 120
+    assert settings.calcom_privacy_email is None
+
+
+def test_config_accepts_privacy_email():
+    from app.config import Settings
+
+    settings = Settings(calcom_privacy_email="private-bookings@example.net")
+
+    assert settings.calcom_privacy_email == "private-bookings@example.net"
 
 
 def test_get_event_type_id_with_duration_specific():
