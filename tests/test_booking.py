@@ -988,6 +988,36 @@ class TestConfirmBooking:
         assert "без личного email временно недоступна" in message
 
     @pytest.mark.asyncio
+    async def test_rejected_personal_email_returns_to_email_entry(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {
+            "name": "Alice",
+            "email": "rejected@example.com",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+        mock_calcom_client.create_booking.side_effect = CalComAPIError(
+            400,
+            "captured response",
+            code="email_domain_cannot_receive_mail",
+        )
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
+            result = await confirm_booking(mock_update_with_query, mock_context)
+
+        assert result == BookingState.ENTERING_EMAIL
+        assert "email" not in mock_context.user_data
+        message = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
+        assert "не принимает этот email" in message
+
+    @pytest.mark.asyncio
     async def test_handles_409_conflict(
         self,
         mock_update_with_query,
