@@ -27,6 +27,15 @@ class TestCalComAPIError:
             error = CalComAPIError(status_code=status, message="Some error")
             assert error.user_message() == "Something went wrong. Please try again."
 
+    def test_retains_machine_readable_error_code(self):
+        error = CalComAPIError(
+            status_code=400,
+            message="email_domain_cannot_receive_mail",
+            code="email_domain_cannot_receive_mail",
+        )
+
+        assert error.code == "email_domain_cannot_receive_mail"
+
 
 class TestTimeSlotModel:
     """Test TimeSlot Pydantic model."""
@@ -88,11 +97,11 @@ class TestBookingModels:
                 email="test@example.com",
                 timeZone="Europe/Moscow",
             ),
-            metadata={"telegram_user_id": "12345"},
+            metadata={"telecalbot_booking_ref": "tbk_test"},
         )
         assert request.eventTypeId == 123
         assert request.lengthInMinutes == 120
-        assert request.metadata["telegram_user_id"] == "12345"
+        assert request.metadata["telecalbot_booking_ref"] == "tbk_test"
 
     def test_booking_request_allows_no_duration_override(self):
         request = BookingRequest(
@@ -501,6 +510,41 @@ class TestCalComClientRetry:
             request=request,
             response=response,
         )
+
+    @pytest.mark.asyncio
+    async def test_parses_captured_email_deliverability_error_code(self, client):
+        response = httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://api.cal.com/v2/bookings"),
+            json={
+                "statusCode": 400,
+                "message": "email_domain_cannot_receive_mail",
+                "status": "error",
+                "timestamp": "2026-07-16T05:58:04.210Z",
+                "path": "/v2/bookings",
+                "error": {
+                    "code": "HttpError",
+                    "message": "This email address cannot receive mail. Please use a valid email.",
+                    "details": {
+                        "message": "This email address cannot receive mail. Please use a valid email.",
+                        "error": "Bad Request",
+                        "statusCode": 400,
+                    },
+                },
+            },
+        )
+
+        with patch.object(
+            client._client,
+            "request",
+            new_callable=AsyncMock,
+            return_value=response,
+        ):
+            with pytest.raises(CalComAPIError) as exc_info:
+                await client._request("POST", "/bookings", json={})
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.code == "email_domain_cannot_receive_mail"
 
     @pytest.mark.asyncio
     async def test_retries_retryable_status_then_succeeds(self, client):

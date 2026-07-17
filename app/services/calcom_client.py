@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from datetime import date
 from typing import Any
@@ -15,14 +16,42 @@ logger = logging.getLogger(__name__)
 class CalComAPIError(Exception):
     """Exception for Cal.com API errors with user-friendly messages."""
 
-    def __init__(self, status_code: int, message: str):
+    def __init__(self, status_code: int, message: str, code: str | None = None):
         self.status_code = status_code
         self.message = message
+        self.code = code
         super().__init__(f"Cal.com API error {status_code}: {message}")
 
     def user_message(self) -> str:
         """Return user-friendly error message."""
         return "Something went wrong. Please try again."
+
+
+def _extract_error_code(response: httpx.Response) -> str | None:
+    """Extract Cal.com's machine-readable error code from a failed response."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    code = payload.get("code")
+    if isinstance(code, str) and code:
+        return code
+
+    message = payload.get("message")
+    if isinstance(message, str) and re.fullmatch(r"[a-z][a-z0-9_]+", message):
+        return message
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        nested_code = error.get("code")
+        if isinstance(nested_code, str) and nested_code:
+            return nested_code
+
+    return None
 
 
 class TimeSlot(BaseModel):
@@ -231,9 +260,19 @@ class CalComClient:
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
                 message = e.response.text
-                logger.error("Cal.com API error %d: %s", status_code, message)
+                error_code = _extract_error_code(e.response)
+                logger.error(
+                    "Cal.com API error %d code=%s: %s",
+                    status_code,
+                    error_code,
+                    message,
+                )
 
-                last_error = CalComAPIError(status_code=status_code, message=message)
+                last_error = CalComAPIError(
+                    status_code=status_code,
+                    message=message,
+                    code=error_code,
+                )
                 should_retry = status_code in self.RETRYABLE_STATUS_CODES
             except httpx.RequestError as e:
                 message = str(e)

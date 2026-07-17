@@ -32,13 +32,29 @@ def test_save_and_list_upcoming_bookings(temp_db_path):
     upcoming = _make_booking_response(1001, now + timedelta(hours=1), now + timedelta(hours=2))
     past = _make_booking_response(1002, now - timedelta(hours=3), now - timedelta(hours=2))
 
-    service.save_booking(telegram_id=12345, booking=upcoming)
-    service.save_booking(telegram_id=12345, booking=past)
+    service.save_booking(telegram_id=12345, booking=upcoming, internal_ref="tbk_upcoming")
+    service.save_booking(telegram_id=12345, booking=past, internal_ref="tbk_past")
 
     results = service.list_upcoming_bookings(12345)
 
     assert len(results) == 1
     assert results[0].calcom_booking_id == 1001
+    assert results[0].internal_ref == "tbk_upcoming"
+
+
+def test_get_booking_by_internal_ref_maps_to_telegram_user(temp_db_path):
+    db = Database(temp_db_path)
+    initialize_schema(db)
+    service = BookingService(db)
+
+    now = datetime.now(timezone.utc)
+    booking = _make_booking_response(1003, now + timedelta(hours=1), now + timedelta(hours=2))
+    service.save_booking(telegram_id=12345, booking=booking, internal_ref="tbk_opaque")
+
+    result = service.get_booking_by_internal_ref("tbk_opaque")
+
+    assert result is not None
+    assert result.telegram_id == 12345
 
 
 def test_get_booking_for_user_enforces_ownership(temp_db_path):
