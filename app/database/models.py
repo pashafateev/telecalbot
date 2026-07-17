@@ -37,6 +37,7 @@ class StoredBooking(BaseModel):
     """Booking record persisted for cancellation lookup."""
 
     id: int
+    internal_ref: str | None = None
     telegram_id: int
     calcom_booking_id: int
     calcom_booking_uid: str

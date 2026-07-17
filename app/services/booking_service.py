@@ -18,12 +18,18 @@ class BookingService:
     def __init__(self, db: Database):
         self.db = db
 
-    def save_booking(self, telegram_id: int, booking: BookingResponse) -> int:
+    def save_booking(
+        self,
+        telegram_id: int,
+        booking: BookingResponse,
+        internal_ref: str | None = None,
+    ) -> int:
         """Insert or refresh an active booking record for a user."""
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute_write(
             """
             INSERT INTO bookings (
+                internal_ref,
                 telegram_id,
                 calcom_booking_id,
                 calcom_booking_uid,
@@ -34,8 +40,9 @@ class BookingService:
                 created_at,
                 cancelled_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL)
             ON CONFLICT(telegram_id, calcom_booking_id) DO UPDATE SET
+                internal_ref = COALESCE(excluded.internal_ref, bookings.internal_ref),
                 calcom_booking_uid = excluded.calcom_booking_uid,
                 title = excluded.title,
                 start_at = excluded.start_at,
@@ -44,6 +51,7 @@ class BookingService:
                 cancelled_at = NULL
             """,
             (
+                internal_ref,
                 telegram_id,
                 booking.id,
                 booking.uid,
@@ -62,6 +70,16 @@ class BookingService:
             (telegram_id, booking.id),
         )
         return row["id"]
+
+    def get_booking_by_internal_ref(self, internal_ref: str) -> StoredBooking | None:
+        """Resolve an opaque Cal.com reference to its local booking owner."""
+        row = self.db.execute_one(
+            "SELECT * FROM bookings WHERE internal_ref = ?",
+            (internal_ref,),
+        )
+        if row is None:
+            return None
+        return self._row_to_booking(row)
 
     def list_upcoming_bookings(self, telegram_id: int) -> list[StoredBooking]:
         """Return active bookings that haven't ended yet."""
@@ -109,6 +127,7 @@ class BookingService:
     def _row_to_booking(row) -> StoredBooking:
         return StoredBooking(
             id=row["id"],
+            internal_ref=row["internal_ref"],
             telegram_id=row["telegram_id"],
             calcom_booking_id=row["calcom_booking_id"],
             calcom_booking_uid=row["calcom_booking_uid"],

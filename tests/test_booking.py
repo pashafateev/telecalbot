@@ -11,6 +11,7 @@ from app.config import ResolvedEventType
 from app.constants import RUSSIAN_TIMEZONES
 from app.handlers.booking import (
     BookingState,
+    _booking_reference,
     _format_duration,
     book_command,
     booking_timeout,
@@ -140,6 +141,15 @@ def availability_response():
 # ---------------------------------------------------------------------------
 # Helper function tests
 # ---------------------------------------------------------------------------
+
+
+def test_booking_references_are_unique_per_booking_attempt():
+    first_reference = _booking_reference({})
+    second_reference = _booking_reference({})
+
+    assert first_reference.startswith("tbk_")
+    assert second_reference.startswith("tbk_")
+    assert first_reference != second_reference
 
 
 class TestFormatDateHeader:
@@ -872,7 +882,9 @@ class TestConfirmBooking:
             await confirm_booking(mock_update_with_query, mock_context)
 
         mock_context.bot_data["booking_service"].save_booking.assert_called_once_with(
-            12345, booking_response
+            12345,
+            booking_response,
+            internal_ref=mock_context.user_data["internal_ref"],
         )
 
     @pytest.mark.asyncio

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS duration_limits (
 -- Persisted bookings for /cancel_booking flow
 CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    internal_ref TEXT,
     telegram_id INTEGER NOT NULL,
     calcom_booking_id INTEGER NOT NULL,
     calcom_booking_uid TEXT NOT NULL,
@@ -71,6 +72,7 @@ def run_migrations(db: Database) -> None:
     """Run any pending database migrations."""
     initialize_schema(db)
     _migrate_bookings_time_columns(db)
+    _ensure_bookings_internal_ref(db)
     _ensure_bookings_indexes(db)
 
 
@@ -120,5 +122,27 @@ def _ensure_bookings_indexes(db: Database) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_bookings_user_status_start
         ON bookings(telegram_id, status, start_at)
+        """
+    )
+
+
+def _ensure_bookings_internal_ref(db: Database) -> None:
+    """Add private booking references to existing databases."""
+    table_exists = db.execute_one(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bookings'"
+    )
+    if table_exists is None:
+        return
+
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(bookings)")}
+    if "internal_ref" not in columns:
+        logger.info("Adding internal_ref column to bookings table")
+        db.execute_write("ALTER TABLE bookings ADD COLUMN internal_ref TEXT")
+
+    db.execute_write(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_internal_ref
+        ON bookings(internal_ref)
+        WHERE internal_ref IS NOT NULL
         """
     )

@@ -69,6 +69,9 @@ Required environment variables:
 - `CALCOM_API_KEY` - Your Cal.com API key
 - `ADMIN_TELEGRAM_ID` - Your Telegram user ID for admin access
 
+Optional environment variables:
+- `CALCOM_PRIVACY_EMAIL` - A dedicated deliverable mailbox Cal.com can use when a user chooses not to provide a personal email. If unset or rejected by Cal.com, the bot explains that private booking is temporarily unavailable and offers the user a voluntary email path.
+
 See `.env.sample` for a complete list of configuration options.
 
 ## Development Status

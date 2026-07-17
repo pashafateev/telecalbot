@@ -1,6 +1,7 @@
 """Booking conversation handler for multi-step appointment booking."""
 
 import logging
+import secrets
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum, auto
 
@@ -83,6 +84,24 @@ BOOKING_REMINDER_JOB_PREFIX = "booking_timeout_reminder:"
 BOOKING_TIMEOUT_REMINDER_TEXT = (
     "Напоминание: сессия записи скоро истечет из-за неактивности.\n"
     "Пожалуйста, завершите запись или начните заново командой /book."
+)
+BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
+    {
+        "timezone",
+        "offset_days",
+        "duration",
+        "pending_duration",
+        "selected_date",
+        "selected_time",
+        "name",
+        "email",
+        "internal_ref",
+    }
+)
+EMAIL_DOMAIN_CANNOT_RECEIVE_MAIL = "email_domain_cannot_receive_mail"
+PRIVACY_EMAIL_UNAVAILABLE_TEXT = (
+    "Запись без личного email временно недоступна. "
+    "Вы можете указать email сейчас или попробовать позже."
 )
 
 
@@ -167,6 +186,47 @@ def _apply_current_duration_limit(
 
 def _booking_reminder_job_name(user_id: int) -> str:
     return f"{BOOKING_REMINDER_JOB_PREFIX}{user_id}"
+
+
+def _clear_booking_scoped_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove only transient values owned by the booking conversation."""
+    for key in BOOKING_SCOPED_USER_DATA_KEYS:
+        context.user_data.pop(key, None)
+
+
+def _privacy_email() -> str | None:
+    configured_email = getattr(settings, "calcom_privacy_email", None)
+    if not isinstance(configured_email, str):
+        return None
+    configured_email = configured_email.strip()
+    return configured_email or None
+
+
+def _booking_reference(data: dict) -> str:
+    existing_reference = data.get("internal_ref")
+    if isinstance(existing_reference, str) and existing_reference.startswith("tbk_"):
+        return existing_reference
+
+    reference = f"tbk_{secrets.token_hex(8)}"
+    data["internal_ref"] = reference
+    return reference
+
+
+async def _show_privacy_email_unavailable(query) -> int:
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Указать email", callback_data="email_yes"),
+                InlineKeyboardButton("Отмена", callback_data="cancel"),
+            ]
+        ]
+    )
+    await _safe_edit_message_text(
+        query,
+        PRIVACY_EMAIL_UNAVAILABLE_TEXT,
+        reply_markup=keyboard,
+    )
+    return BookingState.EMAIL_DECISION
 
 
 def _coerce_positive_int(value, default: int) -> int:
@@ -266,6 +326,7 @@ async def _send_booking_timeout_reminder(context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the booking conversation with timezone selection."""
+    _clear_booking_scoped_state(context)
     if not _is_whitelisted(update, context):
         _cancel_booking_timeout_reminder(context, update.effective_user.id)
         await _deny_booking_access(update)
@@ -682,7 +743,13 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     data = context.user_data
     calcom_client: CalComClient = context.bot_data["calcom_client"]
-    email = data.get("email") or f"telegram-{update.effective_user.id}@telecalbot.local"
+    personal_email = data.get("email")
+    email = personal_email or _privacy_email()
+    if email is None:
+        logger.error("Cal.com privacy email is not configured")
+        return await _show_privacy_email_unavailable(query)
+
+    internal_ref = _booking_reference(data)
     duration = _apply_current_duration_limit(
         context,
         update.effective_user.id,
@@ -712,7 +779,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     timeZone=data["timezone"],
                 ),
                 metadata={
-                    "telegram_user_id": str(update.effective_user.id),
+                    "telecalbot_booking_ref": internal_ref,
                     "booked_via": "telegram_bot",
                 },
             )
@@ -720,7 +787,11 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         booking_service: BookingService | None = context.bot_data.get("booking_service")
         if booking_service is not None:
             try:
-                booking_service.save_booking(update.effective_user.id, booking)
+                booking_service.save_booking(
+                    update.effective_user.id,
+                    booking,
+                    internal_ref=internal_ref,
+                )
             except Exception:
                 logger.exception(
                     "Failed to persist booking for user_id=%s booking_id=%s",
@@ -743,7 +814,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         duration_str = _format_duration(booking)
         email_note = (
-            f"\nПисьмо с подтверждением отправлено на {email}." if data.get("email") else ""
+            f"\nПисьмо с подтверждением отправлено на {email}." if personal_email else ""
         )
 
         await _safe_edit_message_text(
@@ -759,11 +830,22 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     except CalComAPIError as e:
         logger.warning(
-            "Booking create failed for user_id=%s status=%s message=%s",
+            "Booking create failed for user_id=%s status=%s code=%s message=%s",
             update.effective_user.id,
             e.status_code,
+            e.code,
             e.message,
         )
+        if e.code == EMAIL_DOMAIN_CANNOT_RECEIVE_MAIL:
+            if not personal_email:
+                return await _show_privacy_email_unavailable(query)
+
+            data.pop("email", None)
+            await _safe_edit_message_text(
+                query,
+                "Cal.com не принимает этот email. Укажите другой адрес или отмените запись командой /cancel.",
+            )
+            return BookingState.ENTERING_EMAIL
         if e.status_code == 409:
             error_msg = "Это время уже занято. Пожалуйста, выберите другое время."
         else:
@@ -1222,6 +1304,7 @@ def create_booking_conversation_handler() -> ConversationHandler:
             ConversationHandler.TIMEOUT: [TypeHandler(Update, booking_timeout)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
         conversation_timeout=timedelta(seconds=settings.booking_conversation_timeout_seconds),
     )
 

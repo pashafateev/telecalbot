@@ -97,11 +97,11 @@ class TestBookingModels:
                 email="test@example.com",
                 timeZone="Europe/Moscow",
             ),
-            metadata={"telegram_user_id": "12345"},
+            metadata={"telecalbot_booking_ref": "tbk_test"},
         )
         assert request.eventTypeId == 123
         assert request.lengthInMinutes == 120
-        assert request.metadata["telegram_user_id"] == "12345"
+        assert request.metadata["telecalbot_booking_ref"] == "tbk_test"
 
     def test_booking_request_allows_no_duration_override(self):
         request = BookingRequest(
