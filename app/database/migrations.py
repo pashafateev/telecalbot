@@ -110,7 +110,7 @@ def _migrate_user_preferences_profile(db: Database) -> None:
     )
     with db.get_connection() as conn:
         conn.execute("ALTER TABLE user_preferences RENAME TO user_preferences_legacy")
-        conn.executescript(USER_PREFERENCES_SCHEMA)
+        conn.execute(USER_PREFERENCES_SCHEMA)
         conn.execute("DROP TABLE user_preferences_legacy")
 
 
