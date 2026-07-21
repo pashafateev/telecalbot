@@ -1,7 +1,9 @@
 """Application configuration loaded from environment variables."""
 
 from dataclasses import dataclass
+from typing import Literal, Self
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from app.constants import SUPPORTED_BOOKING_DURATIONS
@@ -43,7 +45,39 @@ class Settings(BaseSettings):
     booking_conversation_timeout_seconds: int = 900
     booking_conversation_reminder_seconds_before_timeout: int = 120
 
+    # Telegram Delivery Settings
+    telegram_delivery_mode: Literal["polling", "webhook"] = "polling"
+    telegram_webhook_url: str | None = None
+    telegram_webhook_secret_token: str | None = None
+    telegram_webhook_path: str = "/telegram/webhook"
+    telegram_webhook_listen: str = "0.0.0.0"
+    telegram_webhook_port: int = 8080
+    telegram_drop_pending_updates: bool = False
+
+    # HTTP Health Settings
+    health_check_path: str = "/healthz"
+    readiness_check_path: str = "/readyz"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @field_validator("telegram_webhook_url", "telegram_webhook_secret_token", mode="before")
+    @classmethod
+    def blank_optional_webhook_value_is_unset(cls, value: object) -> object:
+        """Treat blank env values for optional webhook settings as unset."""
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def webhook_mode_requires_authenticated_endpoint(self) -> Self:
+        """Reject webhook mode unless its public URL and shared secret are configured."""
+        if self.telegram_delivery_mode != "webhook":
+            return self
+        if not self.telegram_webhook_url:
+            raise ValueError("TELEGRAM_WEBHOOK_URL is required in webhook mode")
+        if not self.telegram_webhook_secret_token:
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET_TOKEN is required in webhook mode")
+        return self
 
     def resolve_event_type(self, duration_minutes: int) -> ResolvedEventType:
         """Resolve an event type and the duration override Cal.com expects.
