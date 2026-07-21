@@ -9,6 +9,7 @@ from telegram.ext import ConversationHandler
 
 from app.config import ResolvedEventType
 from app.constants import RUSSIAN_TIMEZONES
+from app.database.models import UserPreference
 from app.handlers.booking import (
     BookingState,
     _booking_reference,
@@ -372,7 +373,11 @@ class TestBookCommand:
         whitelist_service = MagicMock()
         whitelist_service.is_whitelisted.return_value = True
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = MagicMock(timezone="Europe/Moscow")
+        preference_service.get_timezone.return_value = UserPreference(
+            telegram_id=12345,
+            timezone="Europe/Moscow",
+            updated_at=datetime.now(timezone.utc),
+        )
         mock_context.bot_data["whitelist_service"] = whitelist_service
         mock_context.bot_data["user_preference_service"] = preference_service
 
@@ -397,10 +402,16 @@ class TestBookCommand:
         whitelist_service = MagicMock()
         whitelist_service.is_whitelisted.return_value = True
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = MagicMock(timezone="Europe/Moscow")
+        preference_service.get_timezone.return_value = UserPreference(
+            telegram_id=12345,
+            timezone="Europe/Moscow",
+            updated_at=datetime.now(timezone.utc),
+        )
         duration_service = MagicMock()
         duration_service.get_limit.return_value = 30
         mock_calcom_client.get_availability.return_value = availability_response
+        sent_message = AsyncMock()
+        mock_update.message.reply_text.return_value = sent_message
         mock_context.bot_data["whitelist_service"] = whitelist_service
         mock_context.bot_data["user_preference_service"] = preference_service
         mock_context.bot_data["duration_limit_service"] = duration_service
@@ -414,6 +425,75 @@ class TestBookCommand:
         assert mock_context.user_data["duration"] == 30
         mock_calcom_client.get_availability.assert_called_once()
         assert mock_calcom_client.get_availability.call_args.kwargs["timezone"] == "Europe/Moscow"
+        mock_update.message.reply_text.assert_awaited_once()
+        assert "Загружаю" in mock_update.message.reply_text.call_args.args[0]
+        sent_message.edit_text.assert_awaited_once()
+        final_text = sent_message.edit_text.call_args.args[0]
+        assert "Используем сохраненный часовой пояс: Europe/Moscow" in final_text
+        assert "Доступное время" in final_text
+
+    @pytest.mark.asyncio
+    async def test_invalid_saved_timezone_falls_back_to_picker(self, mock_update, mock_context):
+        preference_service = MagicMock()
+        preference_service.get_timezone.return_value = UserPreference(
+            telegram_id=12345,
+            timezone="Europe/Removed",
+            updated_at=datetime.now(timezone.utc),
+        )
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
+        mock_context.bot_data["user_preference_service"] = preference_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        assert "timezone" not in mock_context.user_data
+        reply_markup = mock_update.message.reply_text.call_args.kwargs["reply_markup"]
+        callback_data = [
+            button.callback_data for row in reply_markup.inline_keyboard for button in row
+        ]
+        assert "tz:Europe/Moscow" in callback_data
+
+    @pytest.mark.asyncio
+    async def test_preference_load_failure_falls_back_to_picker(self, mock_update, mock_context):
+        preference_service = MagicMock()
+        preference_service.get_timezone.side_effect = RuntimeError("database unavailable")
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
+        mock_context.bot_data["user_preference_service"] = preference_service
+
+        result = await book_command(mock_update, mock_context)
+
+        assert result == BookingState.SELECTING_TIMEZONE
+        assert "timezone" not in mock_context.user_data
+
+    @pytest.mark.asyncio
+    async def test_returning_user_can_change_and_persist_timezone(
+        self,
+        mock_update,
+        mock_update_with_query,
+        mock_context,
+    ):
+        preference_service = MagicMock()
+        preference_service.get_timezone.return_value = UserPreference(
+            telegram_id=12345,
+            timezone="Europe/Moscow",
+            updated_at=datetime.now(timezone.utc),
+        )
+        mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
+        mock_context.bot_data["user_preference_service"] = preference_service
+
+        assert await book_command(mock_update, mock_context) == BookingState.SELECTING_DURATION
+        assert (
+            await change_timezone(mock_update_with_query, mock_context)
+            == BookingState.SELECTING_TIMEZONE
+        )
+        mock_update_with_query.callback_query.from_user.id = 12345
+        mock_update_with_query.callback_query.data = "tz:Asia/Yekaterinburg"
+
+        result = await select_timezone(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+        assert mock_context.user_data["timezone"] == "Asia/Yekaterinburg"
+        preference_service.set_timezone.assert_called_once_with(12345, "Asia/Yekaterinburg")
 
 
 class TestSelectTimezone:
@@ -446,6 +526,40 @@ class TestSelectTimezone:
         await select_timezone(mock_update_with_query, mock_context)
 
         preference_service.set_timezone.assert_called_once_with(12345, "Europe/Moscow")
+
+    @pytest.mark.asyncio
+    async def test_does_not_rewrite_unchanged_timezone(
+        self, mock_update_with_query, mock_context, mock_calcom_client
+    ):
+        preference_service = MagicMock()
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_update_with_query.callback_query.from_user.id = 12345
+        mock_context.user_data["timezone"] = "Europe/Moscow"
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom_client,
+            "user_preference_service": preference_service,
+        }
+
+        await select_timezone(mock_update_with_query, mock_context)
+
+        preference_service.set_timezone.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preference_write_failure_does_not_block_booking(
+        self, mock_update_with_query, mock_context, mock_calcom_client
+    ):
+        preference_service = MagicMock()
+        preference_service.set_timezone.side_effect = RuntimeError("database unavailable")
+        mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
+        mock_context.bot_data = {
+            "calcom_client": mock_calcom_client,
+            "user_preference_service": preference_service,
+        }
+
+        result = await select_timezone(mock_update_with_query, mock_context)
+
+        assert result == BookingState.SELECTING_DURATION
+        assert mock_context.user_data["timezone"] == "Europe/Moscow"
 
     @pytest.mark.asyncio
     async def test_returns_selecting_duration_when_no_limit(
@@ -519,6 +633,13 @@ class TestSelectTimezone:
         last_call = mock_update_with_query.callback_query.edit_message_text.call_args[0][0]
         assert "извините" in last_call.lower() or "не удалось" in last_call.lower()
         assert raw_error not in last_call
+        reply_markup = mock_update_with_query.callback_query.edit_message_text.call_args.kwargs[
+            "reply_markup"
+        ]
+        callback_data = [
+            button.callback_data for row in reply_markup.inline_keyboard for button in row
+        ]
+        assert "change_tz" in callback_data
 
 
 class TestSelectSlot:

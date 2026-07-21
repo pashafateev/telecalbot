@@ -65,6 +65,7 @@ MAX_NAME_LENGTH = 100
 DURATION_OPTIONS = {
     minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS
 }
+SUPPORTED_TIMEZONE_IDS = frozenset(timezone_id for timezone_id, _ in RUSSIAN_TIMEZONES)
 FIFTH_STEP_RESTRICTION_TEXT = (
     "двухчасовые встречи предназначены только для работы по 5-му шагу."
 )
@@ -125,12 +126,15 @@ class _MessageReplyTarget:
         self.message = message
         self.from_user = SimpleNamespace(id=user_id)
         self._prefix = prefix
+        self._sent = None
 
     async def edit_message_text(self, text: str, reply_markup=None) -> None:
         if self._prefix is not None:
             text = f"{self._prefix}\n\n{text}"
-            self._prefix = None
-        await self.message.reply_text(text, reply_markup=reply_markup)
+        if self._sent is None:
+            self._sent = await self.message.reply_text(text, reply_markup=reply_markup)
+            return
+        await self._sent.edit_text(text, reply_markup=reply_markup)
 
 
 def _is_non_editable_message_error(error: BadRequest) -> bool:
@@ -363,7 +367,7 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 update.effective_user.id,
             )
         else:
-            if preference is not None:
+            if preference is not None and preference.timezone in SUPPORTED_TIMEZONE_IDS:
                 context.user_data["timezone"] = preference.timezone
                 context.user_data["offset_days"] = 0
                 target = _MessageReplyTarget(
@@ -372,6 +376,12 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     prefix=f"Используем сохраненный часовой пояс: {preference.timezone}.",
                 )
                 return await _handle_duration_selection(target, context)
+            if preference is not None:
+                logger.warning(
+                    "Ignoring unsupported timezone preference for user_id=%s timezone=%s",
+                    update.effective_user.id,
+                    preference.timezone,
+                )
 
     keyboard = build_timezone_keyboard()
     await update.message.reply_text(
@@ -392,12 +402,13 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     timezone_id = query.data.split(":", 1)[1]
+    previous_timezone = context.user_data.get("timezone")
     context.user_data["timezone"] = timezone_id
     context.user_data["offset_days"] = 0
     preference_service: UserPreferenceService | None = context.bot_data.get(
         "user_preference_service"
     )
-    if preference_service is not None:
+    if preference_service is not None and timezone_id != previous_timezone:
         try:
             preference_service.set_timezone(query.from_user.id, timezone_id)
         except Exception:
@@ -602,6 +613,9 @@ async def _show_availability(
                             "Попробовать снова",
                             callback_data=f"tz:{timezone_id}",
                         ),
+                    ],
+                    [
+                        InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz"),
                         InlineKeyboardButton("Отмена", callback_data="cancel"),
                     ]
                 ]
