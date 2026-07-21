@@ -187,3 +187,40 @@ def test_privacy_conversation_registers_command_and_edit_states():
     assert handlers.PrivacyState.ENTERING_NAME in conversation.states
     assert handlers.PrivacyState.SELECTING_TIMEZONE in conversation.states
     assert handlers.PrivacyState.ENTERING_EMAIL in conversation.states
+
+
+@pytest.mark.asyncio
+async def test_privacy_load_failure_is_not_presented_as_an_empty_profile(caplog):
+    private_values = "Alice Europe/Moscow alice@example.com"
+    profile_service = MagicMock()
+    profile_service.get_profile.side_effect = RuntimeError(private_values)
+    context = _context(profile_service)
+    update = _message_update()
+    caplog.set_level("ERROR")
+
+    await handlers.privacy_command(update, context)
+
+    response = update.message.reply_text.call_args.args[0]
+    assert "не удалось загрузить" in response.lower()
+    assert "Имя: не сохранено" not in response
+    assert private_values not in caplog.text
+    assert "alice@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_privacy_delete_failure_does_not_claim_profile_was_deleted(caplog):
+    private_values = "Alice Europe/Moscow alice@example.com"
+    profile_service = MagicMock()
+    profile_service.clear_profile.side_effect = RuntimeError(private_values)
+    context = _context(profile_service, whitelisted=False)
+    update = _callback_update("privacy:delete_profile")
+    caplog.set_level("ERROR")
+
+    result = await handlers.privacy_callback(update, context)
+
+    assert result == handlers.PrivacyState.VIEWING
+    response = update.callback_query.edit_message_text.call_args.args[0]
+    assert "не удалось удалить" in response.lower()
+    assert "профиль удален" not in response.lower()
+    assert private_values not in caplog.text
+    assert "alice@example.com" not in caplog.text

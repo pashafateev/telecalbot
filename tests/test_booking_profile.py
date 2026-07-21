@@ -220,3 +220,45 @@ async def test_change_controls_use_opaque_callbacks():
     assert "Alice" not in serialized
     assert "Europe/Moscow" not in serialized
     assert "alice@example.com" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_profile_save_failure_keeps_booking_usable_without_false_success(
+    caplog,
+):
+    private_values = "Alice Europe/Moscow alice@example.com"
+    profile_service = MagicMock()
+    profile_service.save_preferred_name.side_effect = RuntimeError(private_values)
+    context = _context(profile_service=profile_service)
+    context.user_data = _ready_booking_data()
+    update = _callback_update("remember:name")
+    caplog.set_level("ERROR")
+
+    await booking.remember_profile_choice(update, context)
+    update.callback_query.data = "remember:save"
+    result = await booking.remember_profile_choice(update, context)
+
+    assert result == booking.BookingState.CONFIRMING
+    response = update.callback_query.edit_message_text.call_args.args[0]
+    assert "Не все выбранные данные удалось сохранить" in response
+    assert "Сохранено для следующих записей" not in response
+    assert private_values not in caplog.text
+    assert "Alice" not in caplog.text
+    assert "Europe/Moscow" not in caplog.text
+    assert "alice@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_profile_load_failure_falls_back_without_logging_private_values(caplog):
+    private_values = "Alice Europe/Moscow alice@example.com"
+    profile_service = MagicMock()
+    profile_service.get_profile.side_effect = RuntimeError(private_values)
+    context = _context(profile_service=profile_service)
+    update = _message_update()
+    caplog.set_level("ERROR")
+
+    result = await booking.book_command(update, context)
+
+    assert result == booking.BookingState.SELECTING_TIMEZONE
+    assert private_values not in caplog.text
+    assert "alice@example.com" not in caplog.text

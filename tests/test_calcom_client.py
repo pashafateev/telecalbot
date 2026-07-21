@@ -591,6 +591,69 @@ class TestCalComClientRetry:
         assert exc_info.value.code == "email_domain_cannot_receive_mail"
 
     @pytest.mark.asyncio
+    async def test_error_log_does_not_expose_response_profile_values(
+        self, client, caplog
+    ):
+        private_values = "Alice Europe/Moscow alice@example.com"
+        response = httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://api.cal.com/v2/bookings"),
+            json={"message": private_values},
+        )
+        caplog.set_level("ERROR")
+
+        with patch.object(
+            client._client,
+            "request",
+            new_callable=AsyncMock,
+            return_value=response,
+        ):
+            with pytest.raises(CalComAPIError):
+                await client._request(
+                    "POST",
+                    "/bookings",
+                    api_version="2026-02-25",
+                    json={},
+                )
+
+        assert "Cal.com API error" in caplog.text
+        assert private_values not in caplog.text
+        assert "alice@example.com" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_availability_cache_log_omits_timezone(self, client, caplog):
+        timezone_id = "Europe/Moscow"
+        response = {
+            "status": "success",
+            "data": {"slots": {}},
+        }
+        caplog.set_level("DEBUG")
+
+        with patch.object(
+            client,
+            "_request",
+            new_callable=AsyncMock,
+            return_value=response,
+        ):
+            await client.get_availability(
+                event_type_id=42,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 2),
+                timezone=timezone_id,
+                duration_minutes=30,
+            )
+            await client.get_availability(
+                event_type_id=42,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 1, 2),
+                timezone=timezone_id,
+                duration_minutes=30,
+            )
+
+        assert "Cache hit for availability" in caplog.text
+        assert timezone_id not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_retries_retryable_status_then_succeeds(self, client):
         with (
             patch.object(

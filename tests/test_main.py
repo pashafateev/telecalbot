@@ -34,6 +34,19 @@ class TestErrorHandler:
 
         assert "Unhandled exception while processing update" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_unhandled_exception_log_omits_private_values(self, caplog):
+        caplog.set_level("ERROR")
+        private_values = "Alice Europe/Moscow alice@example.com"
+        context = MagicMock()
+        context.error = RuntimeError(private_values)
+
+        await error_handler({"message": private_values}, context)
+
+        assert "Unhandled exception while processing update" in caplog.text
+        assert private_values not in caplog.text
+        assert "alice@example.com" not in caplog.text
+
 
 class TestMain:
     """Tests for main application wiring."""
