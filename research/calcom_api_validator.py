@@ -6,7 +6,7 @@ Phase 0 - Critical Research
 This script validates Cal.com API behavior to inform implementation decisions:
 1. Event Type ID discovery
 2. Availability endpoint behavior
-3. Placeholder email acceptance
+3. Placeholder email acceptance with automatic booking cleanup
 4. Rate limits
 5. Meeting method field structure
 """
@@ -28,6 +28,7 @@ class ResearchSettings(BaseSettings):
 
     calcom_api_key: str = ""
     calcom_event_slug: str = "step"
+    calcom_research_allow_write: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -36,6 +37,7 @@ settings = ResearchSettings()
 API_KEY = settings.calcom_api_key
 BASE_URL = "https://api.cal.com/v2"
 EVENT_SLUG = settings.calcom_event_slug
+ALLOW_LIVE_WRITES = settings.calcom_research_allow_write
 EVENT_TYPES_API_VERSION = "2024-06-14"
 SLOTS_API_VERSION = CalComClient.SLOTS_API_VERSION
 BOOKINGS_API_VERSION = CalComClient.BOOKINGS_API_VERSION
@@ -60,6 +62,8 @@ class ResearchResults:
         self.rate_limit_headers = {}
         self.meeting_method_field = None
         self.test_booking_id = None
+        self.test_booking_uid = None
+        self.booking_cleanup_succeeded = None
         self.errors = []
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +75,8 @@ class ResearchResults:
             "rate_limit_headers": self.rate_limit_headers,
             "meeting_method_field": self.meeting_method_field,
             "test_booking_id": self.test_booking_id,
+            "test_booking_uid": self.test_booking_uid,
+            "booking_cleanup_succeeded": self.booking_cleanup_succeeded,
             "errors": self.errors,
         }
 
@@ -142,7 +148,11 @@ class ResearchResults:
             print("6. TEST BOOKING")
             print("-" * 70)
             print(f"✅ Test booking created: {self.test_booking_id}")
-            print("   IMPORTANT: Check Google Calendar to verify sync!")
+            print(f"   UID: {self.test_booking_uid or 'missing'}")
+            if self.booking_cleanup_succeeded:
+                print("✅ Test booking cancelled automatically")
+            elif self.booking_cleanup_succeeded is False:
+                print("❌ Automatic cleanup failed; use the UID above for manual recovery")
             print()
 
         if self.errors:
@@ -282,8 +292,13 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
         results.errors.append("Placeholder email test skipped - no available slots")
         return
 
+    if not ALLOW_LIVE_WRITES:
+        print("[3/5] Skipping live booking test (CALCOM_RESEARCH_ALLOW_WRITE is not true)")
+        return
+
     print("[3/5] Testing placeholder email acceptance...")
 
+    booking_uid = None
     try:
         # Get first available slot
         slots = results.availability_sample
@@ -322,13 +337,27 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
 
         if response.status_code == 201:
             data = response.json()
-            results.test_booking_id = data.get("data", {}).get("id")
+            booking_data = data.get("data", {})
+            results.test_booking_id = booking_data.get("id")
+            results.test_booking_uid = booking_data.get("uid")
+            if isinstance(results.test_booking_uid, str) and results.test_booking_uid:
+                booking_uid = results.test_booking_uid
+            else:
+                results.booking_cleanup_succeeded = False
+                error_msg = (
+                    "Test booking was created without a UID; automatic cleanup is impossible "
+                    f"(booking ID: {results.test_booking_id})"
+                )
+                print(f"  ❌ {error_msg}")
+                results.errors.append(error_msg)
+
             results.placeholder_email_works = True
-            print(f"  ✅ Placeholder email ACCEPTED - Booking ID: {results.test_booking_id}")
-            print("  ⚠️  IMPORTANT: Check Google Calendar to verify this booking!")
+            print(
+                "  ✅ Placeholder email ACCEPTED - "
+                f"Booking ID: {results.test_booking_id}, UID: {results.test_booking_uid}"
+            )
 
             # Try to identify meeting method field
-            booking_data = data.get("data", {})
             if "meetingUrl" in booking_data:
                 results.meeting_method_field = "meetingUrl"
             elif "metadata" in booking_data and "meeting_method" in booking_data["metadata"]:
@@ -353,6 +382,33 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
     except Exception as e:
         print(f"  ❌ Error: {e}")
         results.errors.append(f"Placeholder email test error: {str(e)}")
+    finally:
+        if booking_uid:
+            await cancel_test_booking(client, booking_uid, results)
+
+
+async def cancel_test_booking(
+    client: httpx.AsyncClient,
+    booking_uid: str,
+    results: ResearchResults,
+) -> None:
+    """Cancel a live research booking and retain its UID if cleanup fails."""
+    print(f"  Cleaning up test booking UID: {booking_uid}...")
+    try:
+        response = await client.post(
+            f"/bookings/{booking_uid}/cancel",
+            json={},
+            headers=api_headers(BOOKINGS_API_VERSION),
+        )
+        response.raise_for_status()
+    except Exception as error:
+        results.booking_cleanup_succeeded = False
+        error_msg = f"Test booking cleanup failed for UID {booking_uid}: {error}"
+        print(f"  ❌ {error_msg}")
+        results.errors.append(error_msg)
+    else:
+        results.booking_cleanup_succeeded = True
+        print("  ✅ Test booking cancelled")
 
 
 async def test_rate_limits(client: httpx.AsyncClient, results: ResearchResults):
@@ -423,6 +479,18 @@ async def main():
     # Exit with error code if critical tests failed
     if not results.event_type_id:
         print("❌ CRITICAL: Event Type ID not found - cannot proceed with implementation")
+        sys.exit(1)
+
+    if results.booking_cleanup_succeeded is False:
+        recovery_reference = (
+            f"UID {results.test_booking_uid}"
+            if results.test_booking_uid
+            else f"numeric booking ID {results.test_booking_id}"
+        )
+        print(
+            "❌ CRITICAL: Test booking cleanup failed; "
+            f"manual recovery reference: {recovery_reference}"
+        )
         sys.exit(1)
 
     print("✅ Research complete! Review findings above to inform implementation.")

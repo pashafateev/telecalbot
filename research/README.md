@@ -22,6 +22,8 @@ The `calcom_api_validator.py` script tests critical unknowns about the Cal.com A
 2. **Ensure .env is configured**:
    - `CALCOM_API_KEY` - Your Cal.com API key
    - `CALCOM_EVENT_SLUG` - Event slug (default: "step")
+   - `CALCOM_RESEARCH_ALLOW_WRITE` - Set to `true` only when intentionally running
+     the live create/cancel smoke test (default: `false`)
 
 3. **Run the script**:
    ```bash
@@ -36,9 +38,12 @@ The `calcom_api_validator.py` script tests critical unknowns about the Cal.com A
 The script will:
 - Print a detailed summary of findings to stdout
 - Save results to `research/api_research_results.json`
-- Create a test booking (if placeholder email test runs)
+- Skip all booking writes by default
+- When explicitly enabled, create a test booking and cancel it by UID in the same run
 
-**IMPORTANT**: If a test booking is created, check your Google Calendar to verify it appears!
+**IMPORTANT**: The opt-in smoke test touches the configured live Cal.com account. If
+automatic cancellation fails, the script exits with an error and prints the booking UID
+needed for manual cleanup.
 
 ## What to Do After
 

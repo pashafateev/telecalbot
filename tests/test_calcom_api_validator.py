@@ -82,15 +82,40 @@ async def test_availability_research_uses_current_slots_contract():
 
 
 @pytest.mark.asyncio
-async def test_booking_research_uses_current_slot_shape_and_version():
+async def test_booking_research_requires_explicit_live_write_opt_in(monkeypatch):
+    monkeypatch.setattr(validator, "ALLOW_LIVE_WRITES", False)
+    client = SimpleNamespace(post=AsyncMock())
+    results = validator.ResearchResults()
+    results.event_type_id = 123
+    results.availability_sample = {
+        "2026-01-01": [{"start": "2026-01-01T10:00:00.000Z"}],
+    }
+
+    await validator.test_placeholder_email(client, results)
+
+    client.post.assert_not_awaited()
+    assert results.test_booking_id is None
+    assert results.booking_cleanup_succeeded is None
+
+
+@pytest.mark.asyncio
+async def test_booking_research_creates_and_cancels_by_uid(monkeypatch):
+    monkeypatch.setattr(validator, "ALLOW_LIVE_WRITES", True)
     client = SimpleNamespace(
         post=AsyncMock(
-            return_value=_response(
-                "POST",
-                "/bookings",
-                {"data": {"id": 456}},
-                status_code=201,
-            )
+            side_effect=[
+                _response(
+                    "POST",
+                    "/bookings",
+                    {"data": {"id": 456, "uid": "booking_uid_456"}},
+                    status_code=201,
+                ),
+                _response(
+                    "POST",
+                    "/bookings/booking_uid_456/cancel",
+                    {"data": {}},
+                ),
+            ]
         )
     )
     results = validator.ResearchResults()
@@ -101,8 +126,50 @@ async def test_booking_research_uses_current_slot_shape_and_version():
 
     await validator.test_placeholder_email(client, results)
 
-    assert client.post.call_args.args == ("/bookings",)
-    kwargs = client.post.call_args.kwargs
-    assert kwargs["headers"]["cal-api-version"] == "2026-02-25"
-    assert kwargs["json"]["start"] == "2026-01-01T10:00:00.000Z"
+    create_call, cancel_call = client.post.await_args_list
+    assert create_call.args == ("/bookings",)
+    assert create_call.kwargs["headers"]["cal-api-version"] == "2026-02-25"
+    assert create_call.kwargs["json"]["start"] == "2026-01-01T10:00:00.000Z"
+    assert cancel_call.args == ("/bookings/booking_uid_456/cancel",)
+    assert cancel_call.kwargs["headers"]["cal-api-version"] == "2026-02-25"
+    assert cancel_call.kwargs["json"] == {}
     assert results.test_booking_id == 456
+    assert results.test_booking_uid == "booking_uid_456"
+    assert results.booking_cleanup_succeeded is True
+
+
+@pytest.mark.asyncio
+async def test_booking_research_reports_uid_when_cleanup_fails(monkeypatch):
+    monkeypatch.setattr(validator, "ALLOW_LIVE_WRITES", True)
+    client = SimpleNamespace(
+        post=AsyncMock(
+            side_effect=[
+                _response(
+                    "POST",
+                    "/bookings",
+                    {"data": {"id": 456, "uid": "booking_uid_456"}},
+                    status_code=201,
+                ),
+                _response(
+                    "POST",
+                    "/bookings/booking_uid_456/cancel",
+                    {"error": "cleanup failed"},
+                    status_code=500,
+                ),
+            ]
+        )
+    )
+    results = validator.ResearchResults()
+    results.event_type_id = 123
+    results.availability_sample = {
+        "2026-01-01": [{"start": "2026-01-01T10:00:00.000Z"}],
+    }
+
+    await validator.test_placeholder_email(client, results)
+
+    assert results.booking_cleanup_succeeded is False
+    assert results.test_booking_uid == "booking_uid_456"
+    assert any(
+        "booking_uid_456" in error and "cleanup failed" in error.lower()
+        for error in results.errors
+    )

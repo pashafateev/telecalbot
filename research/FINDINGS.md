@@ -196,13 +196,15 @@ CALCOM_EVENT_TYPE_ID=2442700
 
 ---
 
-## Test Booking Verification
+## Historical Test Booking Verification
 
 **Booking Created**: `14124132`
 **Time**: 2026-01-01T04:00:00.000+03:00
 **Email**: telegram-user-test@telecalbot.local
 
-**⚠️ ACTION REQUIRED**: Check Google Calendar to verify this test booking appears!
+This records the original research run. The current validator defaults to read-only;
+its opt-in booking smoke test captures the booking UID and cancels the booking
+automatically, failing with a recovery reference if cleanup does not succeed.
 
 ---
 
