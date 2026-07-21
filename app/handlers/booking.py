@@ -379,10 +379,11 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if preference_service is not None:
         try:
             profile = preference_service.get_profile(update.effective_user.id)
-        except Exception:
-            logger.exception(
-                "Failed to load booking profile for user_id=%s",
+        except Exception as error:
+            logger.error(
+                "Failed to load booking profile for user_id=%s error_type=%s",
                 update.effective_user.id,
+                type(error).__name__,
             )
         else:
             if profile is not None:
@@ -637,11 +638,12 @@ async def _show_availability(
         )
         return BookingState.VIEWING_AVAILABILITY
 
-    except (CalComAPIError, ValueError):
-        logger.exception(
-            "Failed to load availability for user_id=%s duration=%s",
+    except (CalComAPIError, ValueError) as error:
+        logger.error(
+            "Failed to load availability for user_id=%s duration=%s error_type=%s",
             query.from_user.id,
             duration,
+            type(error).__name__,
         )
         await _safe_edit_message_text(
             query,
@@ -932,11 +934,12 @@ def _persist_profile_choices(context, user_id: int, choices: set[str]) -> str | 
             continue
         try:
             operations[field]()
-        except Exception:
+        except Exception as error:
             failed = True
-            logger.exception(
-                "Failed to persist selected booking profile field for user_id=%s",
+            logger.error(
+                "Failed to persist selected booking profile field for user_id=%s error_type=%s",
                 user_id,
+                type(error).__name__,
             )
         else:
             saved.append(labels[field])
@@ -1131,11 +1134,12 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     booking,
                     internal_ref=internal_ref,
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to persist booking for user_id=%s booking_id=%s",
+            except Exception as error:
+                logger.error(
+                    "Failed to persist booking for user_id=%s booking_id=%s error_type=%s",
                     update.effective_user.id,
                     booking.id,
+                    type(error).__name__,
                 )
 
         logger.info(
@@ -1200,10 +1204,11 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         await _safe_edit_message_text(query, error_msg, reply_markup=keyboard)
         return BookingState.VIEWING_AVAILABILITY
-    except Exception:
-        logger.exception(
-            "Unexpected error while creating booking for user_id=%s",
+    except Exception as error:
+        logger.error(
+            "Unexpected error while creating booking for user_id=%s error_type=%s",
             update.effective_user.id,
+            type(error).__name__,
         )
         keyboard = InlineKeyboardMarkup(
             [

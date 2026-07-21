@@ -22,6 +22,7 @@ PROFILE_DELETE_NOTICE = "Удаление настроек не отменяет
 TELEGRAM_ACCESS_NOTICE = (
     "Данные доступа Telegram управляются отдельно и в этом разделе не изменяются."
 )
+PROFILE_LOAD_FAILED = object()
 
 
 class PrivacyState(IntEnum):
@@ -80,7 +81,15 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return PrivacyState.VIEWING
     if action == "delete_profile":
-        service.clear_profile(user_id)
+        try:
+            service.clear_profile(user_id)
+        except Exception as error:
+            _log_storage_failure("delete", user_id, error)
+            await query.edit_message_text(
+                "Не удалось удалить сохраненный профиль. Попробуйте позже.\n\n"
+                f"{PROFILE_DELETE_NOTICE}"
+            )
+            return PrivacyState.VIEWING
         await query.edit_message_text(
             f"Сохраненный профиль удален.\n\n{PROFILE_DELETE_NOTICE}\n{TELEGRAM_ACCESS_NOTICE}"
         )
@@ -94,7 +103,14 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     }
     operation = operations.get(action)
     if operation is not None:
-        operation()
+        try:
+            operation()
+        except Exception as error:
+            _log_storage_failure("update", user_id, error)
+            await query.edit_message_text(
+                "Не удалось изменить сохраненные данные. Попробуйте позже."
+            )
+            return PrivacyState.VIEWING
 
     profile = _load_profile(context, user_id)
     await query.edit_message_text(
@@ -114,7 +130,14 @@ async def privacy_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Имя слишком длинное. Введите до 100 символов:")
         return PrivacyState.ENTERING_NAME
 
-    _profile_service(context).save_preferred_name(update.effective_user.id, name)
+    try:
+        _profile_service(context).save_preferred_name(update.effective_user.id, name)
+    except Exception as error:
+        _log_storage_failure("save_name", update.effective_user.id, error)
+        await update.message.reply_text(
+            "Не удалось сохранить имя. Попробуйте позже или вернитесь командой /privacy."
+        )
+        return PrivacyState.ENTERING_NAME
     await _reply_with_profile(update, context)
     return PrivacyState.VIEWING
 
@@ -131,7 +154,12 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
     except (IndexError, ValueError):
         return PrivacyState.SELECTING_TIMEZONE
 
-    _profile_service(context).save_timezone(query.from_user.id, timezone_id)
+    try:
+        _profile_service(context).save_timezone(query.from_user.id, timezone_id)
+    except Exception as error:
+        _log_storage_failure("save_timezone", query.from_user.id, error)
+        await query.edit_message_text("Не удалось сохранить часовой пояс. Попробуйте позже.")
+        return PrivacyState.SELECTING_TIMEZONE
     profile = _load_profile(context, query.from_user.id)
     await query.edit_message_text(
         _privacy_summary(profile),
@@ -147,7 +175,14 @@ async def privacy_enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Некорректный email. Попробуйте ещё раз:")
         return PrivacyState.ENTERING_EMAIL
 
-    _profile_service(context).save_email(update.effective_user.id, email)
+    try:
+        _profile_service(context).save_email(update.effective_user.id, email)
+    except Exception as error:
+        _log_storage_failure("save_email", update.effective_user.id, error)
+        await update.message.reply_text(
+            "Не удалось сохранить email. Попробуйте позже или вернитесь командой /privacy."
+        )
+        return PrivacyState.ENTERING_EMAIL
     await _reply_with_profile(update, context)
     return PrivacyState.VIEWING
 
@@ -167,12 +202,28 @@ def _profile_service(context) -> UserPreferenceService:
 def _load_profile(context, user_id: int):
     try:
         return _profile_service(context).get_profile(user_id)
-    except Exception:
-        logger.exception("Failed to load booking profile for privacy command user_id=%s", user_id)
-        return None
+    except Exception as error:
+        _log_storage_failure("load", user_id, error)
+        return PROFILE_LOAD_FAILED
+
+
+def _log_storage_failure(action: str, user_id: int, error: Exception) -> None:
+    logger.error(
+        "Booking profile storage failure action=%s user_id=%s error_type=%s",
+        action,
+        user_id,
+        type(error).__name__,
+    )
 
 
 def _privacy_summary(profile) -> str:
+    if profile is PROFILE_LOAD_FAILED:
+        return (
+            "Не удалось загрузить сохраненные данные. Попробуйте позже.\n\n"
+            f"{PROFILE_DELETE_NOTICE}\n"
+            f"{TELEGRAM_ACCESS_NOTICE}"
+        )
+
     name = profile.preferred_name if profile and profile.preferred_name else "не сохранено"
     timezone = profile.timezone if profile and profile.timezone else "не сохранен"
     if profile is None or profile.email_mode == "ask":
@@ -193,6 +244,11 @@ def _privacy_summary(profile) -> str:
 
 
 def _privacy_keyboard(profile) -> InlineKeyboardMarkup:
+    if profile is PROFILE_LOAD_FAILED:
+        return InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Попробовать снова", callback_data="privacy:back")]]
+        )
+
     buttons = [
         [InlineKeyboardButton("Изменить имя", callback_data="privacy:edit_name")],
     ]
