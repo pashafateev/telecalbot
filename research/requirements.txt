@@ -1,3 +1,0 @@
-# Research script dependencies
-httpx>=0.25.0
-python-decouple>=3.8

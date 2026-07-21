@@ -14,20 +14,22 @@ The `calcom_api_validator.py` script tests critical unknowns about the Cal.com A
 
 ## Running the Research Script
 
-1. **Install dependencies**:
+1. **Install project dependencies**:
    ```bash
-   pip install -r research/requirements.txt
+   uv sync --frozen
    ```
 
 2. **Ensure .env is configured**:
    - `CALCOM_API_KEY` - Your Cal.com API key
    - `CALCOM_EVENT_SLUG` - Event slug (default: "step")
-   - `CAL_API_VERSION` - API version (default: "2024-08-13")
 
 3. **Run the script**:
    ```bash
-   python research/calcom_api_validator.py
+   uv run python research/calcom_api_validator.py
    ```
+
+   Slots and booking API versions are imported from the production Cal.com client;
+   the research-only event-types version is pinned separately.
 
 ## Output
 

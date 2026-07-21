@@ -38,6 +38,7 @@ research was first captured. The production client now pins:
 
 | Endpoint | Required Version |
 |----------|-----------------|
+| `GET /v2/event-types` | `2024-06-14` |
 | `GET /v2/slots` | `2024-09-04` |
 | `POST /v2/bookings` | `2026-02-25` |
 | `POST /v2/bookings/{bookingUid}/cancel` | `2026-02-25` |
@@ -105,6 +106,10 @@ x-ratelimit-reset-default: 60
 ```
 
 **Limit**: 120 requests per minute (per API key)
+
+Cal.com responses observed during research exposed `x-ratelimit-*` headers rather
+than `Retry-After`. The client's bounded `Retry-After` handling is defensive for
+429 responses from Cal.com or an intermediary, not the primary observed signal.
 
 **Implementation Decision**:
 - Implement exponential backoff for 429 errors
