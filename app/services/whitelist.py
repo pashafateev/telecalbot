@@ -125,23 +125,39 @@ class WhitelistService:
 
         Returns True if request was found and approved, False otherwise.
         """
-        request = self.get_access_request(telegram_id)
-        if request is None or request.status != "pending":
-            return False
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            request = conn.execute(
+                "SELECT * FROM access_requests WHERE telegram_id = ?",
+                (telegram_id,),
+            ).fetchone()
+            if request is None or request["status"] != "pending":
+                return False
 
-        # Add to whitelist
-        self.add_to_whitelist(
-            telegram_id=request.telegram_id,
-            display_name=request.display_name,
-            username=request.username,
-            approved_by=approved_by,
-        )
+            conn.execute(
+                """
+                INSERT INTO whitelist (telegram_id, display_name, username, approved_at, approved_by)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(telegram_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    username = excluded.username,
+                    approved_at = excluded.approved_at,
+                    approved_by = excluded.approved_by
+                """,
+                (
+                    request["telegram_id"],
+                    request["display_name"],
+                    request["username"],
+                    now,
+                    approved_by,
+                ),
+            )
 
-        # Update request status
-        self.db.execute_write(
-            "UPDATE access_requests SET status = 'approved' WHERE telegram_id = ?",
-            (telegram_id,),
-        )
+            conn.execute(
+                "UPDATE access_requests SET status = 'approved' WHERE telegram_id = ?",
+                (telegram_id,),
+            )
 
         return True
 
