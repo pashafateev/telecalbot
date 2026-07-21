@@ -58,7 +58,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.warning("Transient Telegram network error: %s", error)
         return
 
-    logger.error("Unhandled exception while processing update %r", update, exc_info=error)
+    logger.error("Unhandled exception while processing update", exc_info=error)
 
 
 def create_application() -> Application:

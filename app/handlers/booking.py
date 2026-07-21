@@ -19,7 +19,11 @@ from telegram.ext import (
 )
 
 from app.config import settings
-from app.constants import RUSSIAN_TIMEZONES, SUPPORTED_BOOKING_DURATIONS
+from app.constants import (
+    RUSSIAN_TIMEZONES,
+    SUPPORTED_BOOKING_DURATIONS,
+    SUPPORTED_TIMEZONE_IDS,
+)
 from app.services.booking_service import BookingService
 from app.services.calcom_client import (
     Attendee,
@@ -62,13 +66,8 @@ RUSSIAN_MONTHS_ABBR = [
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
 MAX_NAME_LENGTH = 100
 
-DURATION_OPTIONS = {
-    minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS
-}
-SUPPORTED_TIMEZONE_IDS = frozenset(timezone_id for timezone_id, _ in RUSSIAN_TIMEZONES)
-FIFTH_STEP_RESTRICTION_TEXT = (
-    "двухчасовые встречи предназначены только для работы по 5-му шагу."
-)
+DURATION_OPTIONS = {minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS}
+FIFTH_STEP_RESTRICTION_TEXT = "двухчасовые встречи предназначены только для работы по 5-му шагу."
 FIFTH_STEP_WARNING_TEXT = (
     f"Важно: {FIFTH_STEP_RESTRICTION_TEXT}\n\n"
     "Если вы записываетесь не для 5-го шага, пожалуйста, выберите длительность "
@@ -98,6 +97,9 @@ BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
         "selected_time",
         "name",
         "email",
+        "email_mode",
+        "remember_choices",
+        "edit_field",
         "internal_ref",
     }
 )
@@ -116,6 +118,7 @@ class BookingState(IntEnum):
     ENTERING_NAME = auto()
     EMAIL_DECISION = auto()
     ENTERING_EMAIL = auto()
+    REMEMBERING_PROFILE = auto()
     CONFIRMING = auto()
 
 
@@ -340,13 +343,28 @@ async def _send_booking_timeout_reminder(context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+def _profile_reuse_message(data: dict) -> str | None:
+    lines = []
+    if data.get("name"):
+        lines.append(f"Имя: {data['name']}")
+    if data.get("timezone"):
+        lines.append(f"Часовой пояс: {data['timezone']}")
+    if data.get("email_mode") == "saved" and data.get("email"):
+        lines.append("Email: используем сохраненный адрес")
+    elif data.get("email_mode") == "private":
+        lines.append("Email: без личного адреса")
+    if not lines:
+        return None
+    return "Используем сохраненные данные:\n" + "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the booking conversation with timezone selection."""
+    """Start booking with only the profile fields the user explicitly saved."""
     _clear_booking_scoped_state(context)
     if not _is_whitelisted(update, context):
         _cancel_booking_timeout_reminder(context, update.effective_user.id)
@@ -360,32 +378,44 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
     if preference_service is not None:
         try:
-            preference = preference_service.get_timezone(update.effective_user.id)
+            profile = preference_service.get_profile(update.effective_user.id)
         except Exception:
             logger.exception(
-                "Failed to load timezone preference for user_id=%s",
+                "Failed to load booking profile for user_id=%s",
                 update.effective_user.id,
             )
         else:
-            if preference is not None and preference.timezone in SUPPORTED_TIMEZONE_IDS:
-                context.user_data["timezone"] = preference.timezone
+            if profile is not None:
+                if profile.preferred_name:
+                    context.user_data["name"] = profile.preferred_name
+                context.user_data["email_mode"] = profile.email_mode
+                if profile.email_mode == "saved" and profile.email:
+                    context.user_data["email"] = profile.email
+                elif profile.email_mode == "private":
+                    context.user_data["email"] = None
+
+            if profile is not None and profile.timezone in SUPPORTED_TIMEZONE_IDS:
+                context.user_data["timezone"] = profile.timezone
                 context.user_data["offset_days"] = 0
                 target = _MessageReplyTarget(
                     update.message,
                     update.effective_user.id,
-                    prefix=f"Используем сохраненный часовой пояс: {preference.timezone}.",
+                    prefix=_profile_reuse_message(context.user_data),
                 )
                 return await _handle_duration_selection(target, context)
-            if preference is not None:
+            if profile is not None and profile.timezone is not None:
                 logger.warning(
-                    "Ignoring unsupported timezone preference for user_id=%s timezone=%s",
+                    "Ignoring unsupported timezone in booking profile for user_id=%s",
                     update.effective_user.id,
-                    preference.timezone,
                 )
 
     keyboard = build_timezone_keyboard()
+    prefix = _profile_reuse_message(context.user_data)
+    message = "Выберите ваш часовой пояс:"
+    if prefix:
+        message = f"{prefix}\n\n{message}"
     await update.message.reply_text(
-        "Выберите ваш часовой пояс:",
+        message,
         reply_markup=keyboard,
     )
     return BookingState.SELECTING_TIMEZONE
@@ -401,25 +431,35 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
 
-    timezone_id = query.data.split(":", 1)[1]
-    previous_timezone = context.user_data.get("timezone")
+    timezone_id = _timezone_from_callback(query.data)
+    if timezone_id is None:
+        return BookingState.SELECTING_TIMEZONE
+
     context.user_data["timezone"] = timezone_id
     context.user_data["offset_days"] = 0
-    preference_service: UserPreferenceService | None = context.bot_data.get(
-        "user_preference_service"
-    )
-    if preference_service is not None and timezone_id != previous_timezone:
-        try:
-            preference_service.set_timezone(query.from_user.id, timezone_id)
-        except Exception:
-            logger.exception(
-                "Failed to persist timezone preference for user_id=%s timezone=%s",
-                query.from_user.id,
-                timezone_id,
-            )
     _refresh_booking_timeout_reminder(context, query.from_user.id)
 
+    if context.user_data.pop("edit_field", None) == "timezone":
+        return await _show_remembering_edit(query, context)
+
     return await _handle_duration_selection(query, context)
+
+
+def _timezone_from_callback(callback_data: str) -> str | None:
+    """Resolve current opaque timezone callbacks and tolerate old rendered keyboards."""
+    try:
+        value = callback_data.split(":", 1)[1]
+    except IndexError:
+        return None
+
+    try:
+        index = int(value)
+    except ValueError:
+        return value if value in SUPPORTED_TIMEZONE_IDS else None
+
+    if index < 0 or index >= len(RUSSIAN_TIMEZONES):
+        return None
+    return RUSSIAN_TIMEZONES[index][0]
 
 
 async def _handle_duration_selection(query, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -611,13 +651,13 @@ async def _show_availability(
                     [
                         InlineKeyboardButton(
                             "Попробовать снова",
-                            callback_data=f"tz:{timezone_id}",
+                            callback_data="retry:availability",
                         ),
                     ],
                     [
                         InlineKeyboardButton(TIMEZONE_BUTTON_LABEL, callback_data="change_tz"),
                         InlineKeyboardButton("Отмена", callback_data="cancel"),
-                    ]
+                    ],
                 ]
             ),
         )
@@ -631,6 +671,14 @@ async def load_more_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     offset_days = int(query.data.split(":")[1])
     context.user_data["offset_days"] = offset_days
+    return await _show_availability(query, context, offset_days=offset_days)
+
+
+async def retry_availability(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Retry availability using transient booking state, not callback values."""
+    query = update.callback_query
+    await query.answer()
+    offset_days = context.user_data.get("offset_days", 0)
     return await _show_availability(query, context, offset_days=offset_days)
 
 
@@ -648,7 +696,7 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle time slot selection and prompt for name."""
+    """Handle a time slot and reuse explicitly remembered contact fields."""
     query = update.callback_query
     await query.answer()
     _refresh_booking_timeout_reminder(context, query.from_user.id)
@@ -657,6 +705,9 @@ async def select_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     parts = query.data.split(":", 2)
     context.user_data["selected_date"] = parts[1]
     context.user_data["selected_time"] = parts[2]
+
+    if context.user_data.get("name"):
+        return await _continue_after_name_edit(query, context, reused=True)
 
     await _safe_edit_message_text(query, "Введите ваше имя:")
     return BookingState.ENTERING_NAME
@@ -685,14 +736,15 @@ async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     context.user_data["name"] = name
 
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Да, указать email", callback_data="email_yes"),
-                InlineKeyboardButton("Нет, пропустить", callback_data="email_no"),
-            ]
-        ]
-    )
+    if context.user_data.pop("edit_field", None) == "name":
+        await _show_remembering_message(update.message, context)
+        return BookingState.REMEMBERING_PROFILE
+
+    if _has_reusable_email_choice(context.user_data):
+        await _show_remembering_message(update.message, context, reused=True)
+        return BookingState.REMEMBERING_PROFILE
+
+    keyboard = _email_decision_keyboard()
     await update.message.reply_text(
         f"Отлично, {name}! Хотите указать email для подтверждения?",
         reply_markup=keyboard,
@@ -716,7 +768,8 @@ async def email_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return BookingState.ENTERING_EMAIL
     else:
         context.user_data["email"] = None
-        return await _show_confirmation_edit(query, context)
+        context.user_data["email_mode"] = "private"
+        return await _show_remembering_edit(query, context)
 
 
 async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -729,8 +782,168 @@ async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return BookingState.ENTERING_EMAIL
 
     context.user_data["email"] = email
-    await _show_confirmation_message(update.message, context)
-    return BookingState.CONFIRMING
+    context.user_data["email_mode"] = "saved"
+    context.user_data.pop("edit_field", None)
+    await _show_remembering_message(update.message, context)
+    return BookingState.REMEMBERING_PROFILE
+
+
+async def _continue_after_name_edit(query, context, *, reused: bool = False) -> int:
+    """Continue from name using only an explicitly remembered email choice."""
+    if _has_reusable_email_choice(context.user_data):
+        return await _show_remembering_edit(query, context, reused=reused)
+
+    prefix = "Используем сохраненное имя.\n\n" if reused else ""
+    await _safe_edit_message_text(
+        query,
+        f"{prefix}Хотите указать email для подтверждения?",
+        reply_markup=_email_decision_keyboard(),
+    )
+    return BookingState.EMAIL_DECISION
+
+
+def _has_reusable_email_choice(data: dict) -> bool:
+    mode = data.get("email_mode")
+    return (mode == "saved" and bool(data.get("email"))) or mode == "private"
+
+
+def _email_decision_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Да, указать email", callback_data="email_yes"),
+                InlineKeyboardButton("Нет, пропустить", callback_data="email_no"),
+            ]
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Granular profile consent
+# ---------------------------------------------------------------------------
+
+
+async def _show_remembering_edit(query, context, *, reused: bool = False) -> int:
+    await _safe_edit_message_text(
+        query,
+        _remembering_text(context.user_data, reused=reused),
+        reply_markup=_remembering_keyboard(context.user_data),
+    )
+    return BookingState.REMEMBERING_PROFILE
+
+
+async def _show_remembering_message(message, context, *, reused: bool = False) -> None:
+    await message.reply_text(
+        _remembering_text(context.user_data, reused=reused),
+        reply_markup=_remembering_keyboard(context.user_data),
+    )
+
+
+def _remembering_text(data: dict, *, reused: bool = False) -> str:
+    reuse_message = _profile_reuse_message(data) if reused else None
+    prefix = f"{reuse_message}\n\n" if reuse_message else ""
+    return (
+        f"{prefix}Какие данные запомнить для следующих записей?\n\n"
+        "Сохранится только то, что вы явно выберете. "
+        "Можно продолжить, ничего не сохраняя."
+    )
+
+
+def _remembering_keyboard(data: dict) -> InlineKeyboardMarkup:
+    choices = set(data.get("remember_choices", set()))
+    buttons = []
+
+    def option(label: str, field: str) -> None:
+        marker = "✓ " if field in choices else ""
+        buttons.append(
+            [InlineKeyboardButton(f"{marker}{label}", callback_data=f"remember:{field}")]
+        )
+
+    option("Запомнить имя", "name")
+    option("Запомнить часовой пояс", "timezone")
+    if data.get("email"):
+        option("Запомнить email", "email")
+    else:
+        option("Предпочитать запись без личного email", "private")
+    buttons.append([InlineKeyboardButton("Сохранить выбранное", callback_data="remember:save")])
+    buttons.append([InlineKeyboardButton("Ничего не сохранять", callback_data="remember:none")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def remember_profile_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Toggle granular consent or persist only the selected profile fields."""
+    query = update.callback_query
+    await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
+    action = query.data.split(":", 1)[1]
+
+    if action == "none":
+        context.user_data.pop("remember_choices", None)
+        return await _show_confirmation_edit(query, context)
+
+    if action == "save":
+        notice = _persist_profile_choices(
+            context,
+            query.from_user.id,
+            set(context.user_data.get("remember_choices", set())),
+        )
+        context.user_data.pop("remember_choices", None)
+        return await _show_confirmation_edit(query, context, notice=notice)
+
+    available = {"name", "timezone"}
+    available.add("email" if context.user_data.get("email") else "private")
+    if action not in available:
+        return BookingState.REMEMBERING_PROFILE
+
+    choices = set(context.user_data.get("remember_choices", set()))
+    if action in choices:
+        choices.remove(action)
+    else:
+        choices.add(action)
+    context.user_data["remember_choices"] = choices
+    return await _show_remembering_edit(query, context)
+
+
+def _persist_profile_choices(context, user_id: int, choices: set[str]) -> str | None:
+    if not choices:
+        return "Новые данные не сохранены."
+
+    profile_service: UserPreferenceService | None = context.bot_data.get("user_preference_service")
+    if profile_service is None:
+        return "Не удалось сохранить выбранные данные. Запись продолжится без изменений профиля."
+
+    data = context.user_data
+    operations = {
+        "name": lambda: profile_service.save_preferred_name(user_id, data["name"]),
+        "timezone": lambda: profile_service.save_timezone(user_id, data["timezone"]),
+        "email": lambda: profile_service.save_email(user_id, data["email"]),
+        "private": lambda: profile_service.save_private_email_mode(user_id),
+    }
+    labels = {
+        "name": "имя",
+        "timezone": "часовой пояс",
+        "email": "email",
+        "private": "режим без личного email",
+    }
+    saved = []
+    failed = False
+    for field in ("name", "timezone", "email", "private"):
+        if field not in choices:
+            continue
+        try:
+            operations[field]()
+        except Exception:
+            failed = True
+            logger.exception(
+                "Failed to persist selected booking profile field for user_id=%s",
+                user_id,
+            )
+        else:
+            saved.append(labels[field])
+
+    if failed:
+        return "Не все выбранные данные удалось сохранить. Запись продолжится."
+    return f"Сохранено для следующих записей: {', '.join(saved)}."
 
 
 # ---------------------------------------------------------------------------
@@ -738,9 +951,16 @@ async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 # ---------------------------------------------------------------------------
 
 
-async def _show_confirmation_edit(query, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def _show_confirmation_edit(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    notice: str | None = None,
+) -> int:
     """Edit message to show booking confirmation."""
     text = _build_confirmation_text(context.user_data)
+    if notice:
+        text = f"{notice}\n\n{text}"
     keyboard = _confirmation_keyboard()
     await _safe_edit_message_text(query, text, reply_markup=keyboard)
     return BookingState.CONFIRMING
@@ -761,12 +981,9 @@ def _build_confirmation_text(data: dict) -> str:
     )
     duration = data.get("duration", 30)
     duration_text = DURATION_OPTIONS.get(duration, f"{duration} мин.")
-    email_line = f"\nEmail: {data['email']}" if data.get("email") else ""
-    fifth_step_warning = (
-        f"\n\nВажно: {FIFTH_STEP_RESTRICTION_TEXT}"
-        if duration == 120
-        else ""
-    )
+    email_value = data.get("email") or "без личного email"
+    email_line = f"\nEmail: {email_value}"
+    fifth_step_warning = f"\n\nВажно: {FIFTH_STEP_RESTRICTION_TEXT}" if duration == 120 else ""
     return (
         f"Подтвердите запись:\n\n"
         f"Время: {formatted_time}\n"
@@ -784,9 +1001,66 @@ def _confirmation_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("Подтвердить запись", callback_data="confirm"),
                 InlineKeyboardButton("Отмена", callback_data="cancel"),
-            ]
+            ],
+            [InlineKeyboardButton("Изменить данные", callback_data="edit:data")],
         ]
     )
+
+
+async def edit_booking_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show value-free controls for changing effective booking details."""
+    query = update.callback_query
+    await query.answer()
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Изменить имя", callback_data="edit:name"),
+                InlineKeyboardButton("Изменить часовой пояс", callback_data="edit:timezone"),
+            ],
+            [
+                InlineKeyboardButton("Изменить email", callback_data="edit:email"),
+                InlineKeyboardButton("Без личного email", callback_data="edit:private"),
+            ],
+            [InlineKeyboardButton("Назад", callback_data="edit:back")],
+        ]
+    )
+    await _safe_edit_message_text(
+        query,
+        "Что изменить в данных этой записи?",
+        reply_markup=keyboard,
+    )
+    return BookingState.CONFIRMING
+
+
+async def edit_booking_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Collect one changed booking value without changing saved consent."""
+    query = update.callback_query
+    await query.answer()
+    field = query.data.split(":", 1)[1]
+
+    if field == "back":
+        return await _show_confirmation_edit(query, context)
+    if field == "name":
+        context.user_data["edit_field"] = "name"
+        await _safe_edit_message_text(query, "Введите имя для этой записи:")
+        return BookingState.ENTERING_NAME
+    if field == "timezone":
+        context.user_data["edit_field"] = "timezone"
+        await _safe_edit_message_text(
+            query,
+            "Выберите часовой пояс для этой записи:",
+            reply_markup=build_timezone_keyboard(),
+        )
+        return BookingState.SELECTING_TIMEZONE
+    if field == "email":
+        context.user_data["edit_field"] = "email"
+        await _safe_edit_message_text(query, "Введите email для этой записи:")
+        return BookingState.ENTERING_EMAIL
+    if field == "private":
+        context.user_data["email"] = None
+        context.user_data["email_mode"] = "private"
+        return await _show_remembering_edit(query, context)
+    return BookingState.CONFIRMING
 
 
 # ---------------------------------------------------------------------------
@@ -827,11 +1101,10 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         resolved_event_type = settings.resolve_event_type(duration)
         start_utc = slot_to_utc(data["selected_time"])
         logger.info(
-            "Creating booking for user_id=%s event_type_id=%s start_utc=%s timezone=%s",
+            "Creating booking for user_id=%s event_type_id=%s start_utc=%s",
             update.effective_user.id,
             resolved_event_type.event_type_id,
             start_utc,
-            data.get("timezone"),
         )
 
         booking = await calcom_client.create_booking(
@@ -879,9 +1152,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             data["timezone"],
         )
         duration_str = _format_duration(booking)
-        email_note = (
-            f"\nПисьмо с подтверждением отправлено на {email}." if personal_email else ""
-        )
+        email_note = f"\nПисьмо с подтверждением отправлено на {email}." if personal_email else ""
 
         await _safe_edit_message_text(
             query,
@@ -896,11 +1167,10 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     except CalComAPIError as e:
         logger.warning(
-            "Booking create failed for user_id=%s status=%s code=%s message=%s",
+            "Booking create failed for user_id=%s status=%s code=%s",
             update.effective_user.id,
             e.status_code,
             e.code,
-            e.message,
         )
         if e.code == EMAIL_DOMAIN_CANNOT_RECEIVE_MAIL:
             if not personal_email:
@@ -922,7 +1192,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 [
                     InlineKeyboardButton(
                         "Выбрать другое время",
-                        callback_data=f"tz:{data['timezone']}",
+                        callback_data="retry:availability",
                     ),
                     InlineKeyboardButton("Отмена", callback_data="cancel"),
                 ]
@@ -940,7 +1210,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 [
                     InlineKeyboardButton(
                         "Выбрать другое время",
-                        callback_data=f"tz:{data['timezone']}",
+                        callback_data="retry:availability",
                     ),
                     InlineKeyboardButton("Отмена", callback_data="cancel"),
                 ]
@@ -1160,8 +1430,8 @@ def create_cancel_booking_flow_handlers() -> list:
 def build_timezone_keyboard() -> InlineKeyboardMarkup:
     """Build timezone selection keyboard."""
     buttons = [
-        [InlineKeyboardButton(label, callback_data=f"tz:{tz_id}")]
-        for tz_id, label in RUSSIAN_TIMEZONES
+        [InlineKeyboardButton(label, callback_data=f"tz:{index}")]
+        for index, (_, label) in enumerate(RUSSIAN_TIMEZONES)
     ]
     buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(buttons)
@@ -1349,6 +1619,7 @@ def create_booking_conversation_handler() -> ConversationHandler:
             BookingState.VIEWING_AVAILABILITY: [
                 CallbackQueryHandler(select_slot, pattern="^slot:"),
                 CallbackQueryHandler(load_more_dates, pattern="^dates:"),
+                CallbackQueryHandler(retry_availability, pattern="^retry:availability$"),
                 CallbackQueryHandler(change_timezone, pattern="^change_tz$"),
                 CallbackQueryHandler(select_timezone, pattern="^tz:"),
                 CallbackQueryHandler(noop, pattern="^noop$"),
@@ -1364,9 +1635,16 @@ def create_booking_conversation_handler() -> ConversationHandler:
             BookingState.ENTERING_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_email),
             ],
+            BookingState.REMEMBERING_PROFILE: [
+                CallbackQueryHandler(remember_profile_choice, pattern="^remember:"),
+                CallbackQueryHandler(cancel, pattern="^cancel$"),
+            ],
             BookingState.CONFIRMING: [
                 CallbackQueryHandler(confirm_booking, pattern="^confirm$"),
-                CallbackQueryHandler(select_timezone, pattern="^tz:"),
+                CallbackQueryHandler(edit_booking_data, pattern="^edit:data$"),
+                CallbackQueryHandler(
+                    edit_booking_field, pattern="^edit:(name|timezone|email|private|back)$"
+                ),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
             ],
             ConversationHandler.TIMEOUT: [TypeHandler(Update, booking_timeout)],

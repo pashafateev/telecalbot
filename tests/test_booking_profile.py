@@ -64,7 +64,7 @@ def _ready_booking_data(**overrides):
 async def test_selecting_timezone_is_booking_scoped_until_remembered():
     profile_service = MagicMock()
     context = _context(profile_service=profile_service)
-    update = _callback_update("tz:3")
+    update = _callback_update("tz:1")
 
     result = await booking.select_timezone(update, context)
 
@@ -138,9 +138,7 @@ async def test_private_email_choice_opens_granular_remembering_screen():
 
     assert result == booking.BookingState.REMEMBERING_PROFILE
     keyboard = update.callback_query.edit_message_text.call_args.kwargs["reply_markup"]
-    callbacks = {
-        button.callback_data for row in keyboard.inline_keyboard for button in row
-    }
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
     assert callbacks == {
         "remember:name",
         "remember:timezone",
@@ -193,9 +191,7 @@ async def test_save_nothing_keeps_values_transient_and_shows_confirmation():
 
 
 def test_confirmation_always_shows_effective_private_booking_details():
-    text = booking._build_confirmation_text(
-        _ready_booking_data(email=None, email_mode="private")
-    )
+    text = booking._build_confirmation_text(_ready_booking_data(email=None, email_mode="private"))
 
     assert "Alice" in text
     assert "Europe/Moscow" in text
@@ -212,9 +208,7 @@ async def test_change_controls_use_opaque_callbacks():
 
     assert result == booking.BookingState.CONFIRMING
     keyboard = update.callback_query.edit_message_text.call_args.kwargs["reply_markup"]
-    callbacks = {
-        button.callback_data for row in keyboard.inline_keyboard for button in row
-    }
+    callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
     assert callbacks == {
         "edit:name",
         "edit:timezone",

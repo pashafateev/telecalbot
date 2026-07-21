@@ -48,13 +48,12 @@ from app.services.calcom_client import (
 )
 
 
-def _resolved_event_type(
-    duration_minutes: int, event_type_id: int = 42
-) -> ResolvedEventType:
+def _resolved_event_type(duration_minutes: int, event_type_id: int = 42) -> ResolvedEventType:
     return ResolvedEventType(
         event_type_id=event_type_id,
         duration_minutes=duration_minutes,
     )
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -223,8 +222,7 @@ class TestBuildDurationKeyboard:
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
 
         assert any(
-            btn.text == "Часовой пояс" and btn.callback_data == "change_tz"
-            for btn in all_buttons
+            btn.text == "Часовой пояс" and btn.callback_data == "change_tz" for btn in all_buttons
         )
 
 
@@ -367,13 +365,11 @@ class TestBookCommand:
         assert "reply_markup" in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_skips_timezone_selection_for_returning_user(
-        self, mock_update, mock_context
-    ):
+    async def test_skips_timezone_selection_for_returning_user(self, mock_update, mock_context):
         whitelist_service = MagicMock()
         whitelist_service.is_whitelisted.return_value = True
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = UserPreference(
+        preference_service.get_profile.return_value = UserPreference(
             telegram_id=12345,
             timezone="Europe/Moscow",
             updated_at=datetime.now(timezone.utc),
@@ -402,7 +398,7 @@ class TestBookCommand:
         whitelist_service = MagicMock()
         whitelist_service.is_whitelisted.return_value = True
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = UserPreference(
+        preference_service.get_profile.return_value = UserPreference(
             telegram_id=12345,
             timezone="Europe/Moscow",
             updated_at=datetime.now(timezone.utc),
@@ -429,13 +425,13 @@ class TestBookCommand:
         assert "Загружаю" in mock_update.message.reply_text.call_args.args[0]
         sent_message.edit_text.assert_awaited_once()
         final_text = sent_message.edit_text.call_args.args[0]
-        assert "Используем сохраненный часовой пояс: Europe/Moscow" in final_text
+        assert "Часовой пояс: Europe/Moscow" in final_text
         assert "Доступное время" in final_text
 
     @pytest.mark.asyncio
     async def test_invalid_saved_timezone_falls_back_to_picker(self, mock_update, mock_context):
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = UserPreference(
+        preference_service.get_profile.return_value = UserPreference(
             telegram_id=12345,
             timezone="Europe/Removed",
             updated_at=datetime.now(timezone.utc),
@@ -451,12 +447,12 @@ class TestBookCommand:
         callback_data = [
             button.callback_data for row in reply_markup.inline_keyboard for button in row
         ]
-        assert "tz:Europe/Moscow" in callback_data
+        assert "tz:1" in callback_data
 
     @pytest.mark.asyncio
     async def test_preference_load_failure_falls_back_to_picker(self, mock_update, mock_context):
         preference_service = MagicMock()
-        preference_service.get_timezone.side_effect = RuntimeError("database unavailable")
+        preference_service.get_profile.side_effect = RuntimeError("database unavailable")
         mock_context.bot_data["whitelist_service"].is_whitelisted.return_value = True
         mock_context.bot_data["user_preference_service"] = preference_service
 
@@ -466,14 +462,14 @@ class TestBookCommand:
         assert "timezone" not in mock_context.user_data
 
     @pytest.mark.asyncio
-    async def test_returning_user_can_change_and_persist_timezone(
+    async def test_returning_user_can_change_timezone_without_automatic_persistence(
         self,
         mock_update,
         mock_update_with_query,
         mock_context,
     ):
         preference_service = MagicMock()
-        preference_service.get_timezone.return_value = UserPreference(
+        preference_service.get_profile.return_value = UserPreference(
             telegram_id=12345,
             timezone="Europe/Moscow",
             updated_at=datetime.now(timezone.utc),
@@ -493,7 +489,7 @@ class TestBookCommand:
 
         assert result == BookingState.SELECTING_DURATION
         assert mock_context.user_data["timezone"] == "Asia/Yekaterinburg"
-        preference_service.set_timezone.assert_called_once_with(12345, "Asia/Yekaterinburg")
+        preference_service.save_timezone.assert_not_called()
 
 
 class TestSelectTimezone:
@@ -512,7 +508,7 @@ class TestSelectTimezone:
         assert mock_context.user_data["timezone"] == "Europe/Moscow"
 
     @pytest.mark.asyncio
-    async def test_persists_selected_timezone(
+    async def test_does_not_automatically_persist_selected_timezone(
         self, mock_update_with_query, mock_context, mock_calcom_client
     ):
         preference_service = MagicMock()
@@ -525,7 +521,7 @@ class TestSelectTimezone:
 
         await select_timezone(mock_update_with_query, mock_context)
 
-        preference_service.set_timezone.assert_called_once_with(12345, "Europe/Moscow")
+        preference_service.save_timezone.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_does_not_rewrite_unchanged_timezone(
@@ -542,14 +538,13 @@ class TestSelectTimezone:
 
         await select_timezone(mock_update_with_query, mock_context)
 
-        preference_service.set_timezone.assert_not_called()
+        preference_service.save_timezone.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_preference_write_failure_does_not_block_booking(
+    async def test_timezone_selection_does_not_touch_profile_service(
         self, mock_update_with_query, mock_context, mock_calcom_client
     ):
         preference_service = MagicMock()
-        preference_service.set_timezone.side_effect = RuntimeError("database unavailable")
         mock_update_with_query.callback_query.data = "tz:Europe/Moscow"
         mock_context.bot_data = {
             "calcom_client": mock_calcom_client,
@@ -560,6 +555,7 @@ class TestSelectTimezone:
 
         assert result == BookingState.SELECTING_DURATION
         assert mock_context.user_data["timezone"] == "Europe/Moscow"
+        assert preference_service.mock_calls == []
 
     @pytest.mark.asyncio
     async def test_returns_selecting_duration_when_no_limit(
@@ -758,7 +754,7 @@ class TestEmailDecision:
         assert mock_context.user_data.get("email") is None
 
     @pytest.mark.asyncio
-    async def test_no_returns_confirming(self, mock_update_with_query, mock_context):
+    async def test_no_returns_remembering_profile(self, mock_update_with_query, mock_context):
         mock_update_with_query.callback_query.data = "email_no"
         mock_context.user_data = {
             "name": "Alice",
@@ -769,7 +765,7 @@ class TestEmailDecision:
 
         result = await email_decision(mock_update_with_query, mock_context)
 
-        assert result == BookingState.CONFIRMING
+        assert result == BookingState.REMEMBERING_PROFILE
 
 
 class TestEnterEmail:
@@ -788,7 +784,7 @@ class TestEnterEmail:
         assert mock_context.user_data["email"] == "alice@example.com"
 
     @pytest.mark.asyncio
-    async def test_returns_confirming(self, mock_update, mock_context):
+    async def test_returns_remembering_profile(self, mock_update, mock_context):
         mock_update.message.text = "alice@example.com"
         mock_context.user_data = {
             "name": "Alice",
@@ -799,7 +795,7 @@ class TestEnterEmail:
 
         result = await enter_email(mock_update, mock_context)
 
-        assert result == BookingState.CONFIRMING
+        assert result == BookingState.REMEMBERING_PROFILE
 
     @pytest.mark.asyncio
     async def test_shows_confirmation(self, mock_update, mock_context):
@@ -1152,11 +1148,7 @@ class TestConfirmBooking:
         keyboard = mock_update_with_query.callback_query.edit_message_text.call_args.kwargs[
             "reply_markup"
         ]
-        callbacks = {
-            button.callback_data
-            for row in keyboard.inline_keyboard
-            for button in row
-        }
+        callbacks = {button.callback_data for row in keyboard.inline_keyboard for button in row}
         assert callbacks == {"email_yes", "cancel"}
 
     @pytest.mark.asyncio
