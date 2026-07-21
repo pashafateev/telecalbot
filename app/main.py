@@ -79,10 +79,7 @@ def main() -> None:
     application.bot_data["whitelist_service"] = WhitelistService(db)
     application.bot_data["duration_limit_service"] = DurationLimitService(db)
     application.bot_data["booking_service"] = BookingService(db)
-    application.bot_data["calcom_client"] = CalComClient(
-        api_key=settings.calcom_api_key,
-        api_version=settings.cal_api_version,
-    )
+    application.bot_data["calcom_client"] = CalComClient(api_key=settings.calcom_api_key)
 
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))

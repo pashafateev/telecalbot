@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import math
 import re
 import time
 from datetime import date
@@ -100,33 +101,28 @@ class CalComClient:
     """Async Cal.com API client with caching."""
 
     BASE_URL = "https://api.cal.com/v2"
-    DEFAULT_API_VERSION = "2024-06-14"
     SLOTS_API_VERSION = "2024-09-04"
     BOOKINGS_API_VERSION = "2026-02-25"
     MAX_RETRIES = 3
     INITIAL_RETRY_DELAY_SECONDS = 0.5
+    MAX_RETRY_DELAY_SECONDS = 10.0
     RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 
     def __init__(
         self,
         api_key: str,
-        api_version: str,
         cache_ttl: int = 300,
     ):
         """Initialize the Cal.com client.
 
         Args:
             api_key: Cal.com API key.
-            api_version: Fallback Cal.com API version for endpoints without
-                an explicit endpoint-specific version.
             cache_ttl: Cache TTL in seconds (default 300 = 5 minutes).
         """
-        self.api_version = api_version or self.DEFAULT_API_VERSION
         self._client = httpx.AsyncClient(
             base_url=self.BASE_URL,
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "cal-api-version": self.api_version,
                 "Content-Type": "application/json",
             },
             timeout=30.0,
@@ -242,7 +238,8 @@ class CalComClient:
         self,
         method: str,
         path: str,
-        api_version: str | None = None,
+        *,
+        api_version: str,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make HTTP request to Cal.com API.
@@ -261,9 +258,9 @@ class CalComClient:
         """
         delay_seconds = self.INITIAL_RETRY_DELAY_SECONDS
         last_error: CalComAPIError | None = None
+        request_kwargs = self._with_api_version_header(kwargs, api_version)
 
         for attempt in range(1, self.MAX_RETRIES + 2):
-            request_kwargs = self._with_api_version_header(kwargs, api_version)
             try:
                 response = await self._client.request(method, path, **request_kwargs)
                 response.raise_for_status()
@@ -313,18 +310,18 @@ class CalComClient:
     def _with_api_version_header(
         self,
         kwargs: dict[str, Any],
-        api_version: str | None,
+        api_version: str,
     ) -> dict[str, Any]:
         """Return request kwargs with the correct Cal.com API version header."""
         request_kwargs = dict(kwargs)
         headers = dict(request_kwargs.pop("headers", {}))
-        headers.setdefault("cal-api-version", api_version or self.api_version)
+        headers["cal-api-version"] = api_version
         request_kwargs["headers"] = headers
         return request_kwargs
 
     @staticmethod
     def _retry_delay_seconds(response: httpx.Response, fallback_seconds: float) -> float:
-        """Use Retry-After for rate limits when Cal.com provides it."""
+        """Use bounded numeric Retry-After values, falling back for HTTP dates."""
         if response.status_code != 429:
             return fallback_seconds
 
@@ -337,7 +334,10 @@ class CalComClient:
         except ValueError:
             return fallback_seconds
 
-        return max(seconds, 0.0)
+        if not math.isfinite(seconds):
+            return fallback_seconds
+
+        return min(max(seconds, 0.0), CalComClient.MAX_RETRY_DELAY_SECONDS)
 
     @staticmethod
     def _parse_availability(data: dict[str, Any]) -> AvailabilityResponse:
@@ -345,15 +345,24 @@ class CalComClient:
         raw_slots = data.get("slots", data)
         normalized_slots: dict[str, list[dict[str, str]]] = {}
 
+        if not isinstance(raw_slots, dict):
+            return AvailabilityResponse(slots={})
+
         for day, slots in raw_slots.items():
+            if not isinstance(day, str) or not isinstance(slots, list):
+                continue
+
             normalized_slots[day] = []
             for slot in slots:
                 if isinstance(slot, str):
                     normalized_slots[day].append({"time": slot})
                     continue
 
+                if not isinstance(slot, dict):
+                    continue
+
                 slot_time = slot.get("time") or slot.get("start")
-                if slot_time is not None:
+                if isinstance(slot_time, str):
                     normalized_slots[day].append({"time": slot_time})
 
         return AvailabilityResponse.model_validate({"slots": normalized_slots})

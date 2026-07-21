@@ -32,7 +32,7 @@ The Cal.com API v2 is fully functional and supports all requirements for the Tel
 
 **Finding**: Different endpoints require different API versions
 
-**Current verification (2026-06-14)**: Cal.com still requires endpoint-specific
+**Current verification (2026-07-20)**: Cal.com requires endpoint-specific
 `cal-api-version` headers, but the required versions have changed since this
 research was first captured. The production client now pins:
 
@@ -42,43 +42,33 @@ research was first captured. The production client now pins:
 | `POST /v2/bookings` | `2026-02-25` |
 | `POST /v2/bookings/{bookingUid}/cancel` | `2026-02-25` |
 
-`CAL_API_VERSION` is treated as a fallback for endpoints without an explicit
-client-pinned version.
-
-| Endpoint | Required Version |
-|----------|-----------------|
-| `/v2/event-types` | `2024-06-14` |
-| `/v2/slots/available` | `2024-06-14` |
-| `/v2/bookings` | `2024-08-13` |
-
 **Implementation Decision**:
-- Use `2024-06-14` as default API version
-- Override with `2024-08-13` specifically for booking creation requests
-- Add version handling to Cal.com client wrapper
+- Pin each endpoint's required version in the Cal.com client wrapper
+- Do not expose a global `CAL_API_VERSION` setting that cannot affect pinned endpoints
+- Require every low-level client request to declare its endpoint version
 
 ---
 
 ### 3. Availability Response Format ✅
 
-**Finding**: Slots are returned as objects, not simple strings
+**Finding**: Current slots are grouped directly by date and use a `start` field
 
 **Response Structure**:
 ```json
 {
-  "slots": {
-    "2026-01-01": [
-      {"time": "2026-01-01T04:00:00.000+03:00"}
-    ],
-    "2026-01-02": [
-      {"time": "2026-01-02T05:00:00.000+03:00"},
-      {"time": "2026-01-02T06:00:00.000+03:00"}
-    ]
-  }
+  "2026-01-01": [
+    {"start": "2026-01-01T04:00:00.000+03:00"}
+  ],
+  "2026-01-02": [
+    {"start": "2026-01-02T05:00:00.000+03:00"},
+    {"start": "2026-01-02T06:00:00.000+03:00"}
+  ]
 }
 ```
 
 **Implementation Decision**:
-- Extract time from `slot.time` not from slot directly
+- Normalize current `slot.start` values into the application's `TimeSlot.time` model
+- Continue accepting the legacy `{"slots": {date: [{"time": ...}]}}` shape defensively
 - Times are already in the requested timezone (ISO format with offset)
 - Use `datetime.fromisoformat()` to parse
 
@@ -161,7 +151,7 @@ x-ratelimit-reset-default: 60
 - `start` must be ISO 8601 timestamp (can include timezone offset)
 - `attendee` object required with name, email, timeZone, language
 - `metadata` can store additional context (Telegram user ID, etc.)
-- Use API version `2024-08-13` for bookings endpoint
+- Use API version `2026-02-25` for the bookings endpoint
 
 ---
 
@@ -172,7 +162,6 @@ x-ratelimit-reset-default: 60
 **`.env` additions**:
 ```bash
 CALCOM_EVENT_TYPE_ID=2442700
-CAL_API_VERSION=2024-06-14  # Default for most endpoints
 ```
 
 ### Architecture Changes
