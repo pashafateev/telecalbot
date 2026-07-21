@@ -24,7 +24,7 @@ def test_config_defaults():
 
     settings = Settings()
 
-    assert settings.cal_api_version == "2024-08-13"
+    assert "cal_api_version" not in Settings.model_fields
     assert settings.calcom_event_slug == "step"
     assert settings.database_path == "telecalbot.db"
     assert settings.log_level == "INFO"

@@ -32,40 +32,44 @@ The Cal.com API v2 is fully functional and supports all requirements for the Tel
 
 **Finding**: Different endpoints require different API versions
 
+**Current verification (2026-07-20)**: Cal.com requires endpoint-specific
+`cal-api-version` headers, but the required versions have changed since this
+research was first captured. The production client now pins:
+
 | Endpoint | Required Version |
 |----------|-----------------|
-| `/v2/event-types` | `2024-06-14` |
-| `/v2/slots/available` | `2024-06-14` |
-| `/v2/bookings` | `2024-08-13` |
+| `GET /v2/event-types` | `2024-06-14` |
+| `GET /v2/slots` | `2024-09-04` |
+| `POST /v2/bookings` | `2026-02-25` |
+| `POST /v2/bookings/{bookingUid}/cancel` | `2026-02-25` |
 
 **Implementation Decision**:
-- Use `2024-06-14` as default API version
-- Override with `2024-08-13` specifically for booking creation requests
-- Add version handling to Cal.com client wrapper
+- Pin each endpoint's required version in the Cal.com client wrapper
+- Do not expose a global `CAL_API_VERSION` setting that cannot affect pinned endpoints
+- Require every low-level client request to declare its endpoint version
 
 ---
 
 ### 3. Availability Response Format ✅
 
-**Finding**: Slots are returned as objects, not simple strings
+**Finding**: Current slots are grouped directly by date and use a `start` field
 
 **Response Structure**:
 ```json
 {
-  "slots": {
-    "2026-01-01": [
-      {"time": "2026-01-01T04:00:00.000+03:00"}
-    ],
-    "2026-01-02": [
-      {"time": "2026-01-02T05:00:00.000+03:00"},
-      {"time": "2026-01-02T06:00:00.000+03:00"}
-    ]
-  }
+  "2026-01-01": [
+    {"start": "2026-01-01T04:00:00.000+03:00"}
+  ],
+  "2026-01-02": [
+    {"start": "2026-01-02T05:00:00.000+03:00"},
+    {"start": "2026-01-02T06:00:00.000+03:00"}
+  ]
 }
 ```
 
 **Implementation Decision**:
-- Extract time from `slot.time` not from slot directly
+- Normalize current `slot.start` values into the application's `TimeSlot.time` model
+- Continue accepting the legacy `{"slots": {date: [{"time": ...}]}}` shape defensively
 - Times are already in the requested timezone (ISO format with offset)
 - Use `datetime.fromisoformat()` to parse
 
@@ -102,6 +106,10 @@ x-ratelimit-reset-default: 60
 ```
 
 **Limit**: 120 requests per minute (per API key)
+
+Cal.com responses observed during research exposed `x-ratelimit-*` headers rather
+than `Retry-After`. The client's bounded `Retry-After` handling is defensive for
+429 responses from Cal.com or an intermediary, not the primary observed signal.
 
 **Implementation Decision**:
 - Implement exponential backoff for 429 errors
@@ -148,7 +156,7 @@ x-ratelimit-reset-default: 60
 - `start` must be ISO 8601 timestamp (can include timezone offset)
 - `attendee` object required with name, email, timeZone, language
 - `metadata` can store additional context (Telegram user ID, etc.)
-- Use API version `2024-08-13` for bookings endpoint
+- Use API version `2026-02-25` for the bookings endpoint
 
 ---
 
@@ -159,7 +167,6 @@ x-ratelimit-reset-default: 60
 **`.env` additions**:
 ```bash
 CALCOM_EVENT_TYPE_ID=2442700
-CAL_API_VERSION=2024-06-14  # Default for most endpoints
 ```
 
 ### Architecture Changes
@@ -189,13 +196,15 @@ CAL_API_VERSION=2024-06-14  # Default for most endpoints
 
 ---
 
-## Test Booking Verification
+## Historical Test Booking Verification
 
 **Booking Created**: `14124132`
 **Time**: 2026-01-01T04:00:00.000+03:00
 **Email**: telegram-user-test@telecalbot.local
 
-**⚠️ ACTION REQUIRED**: Check Google Calendar to verify this test booking appears!
+This records the original research run. The current validator defaults to read-only;
+its opt-in booking smoke test captures the booking UID and cancels the booking
+automatically, failing with a recovery reference if cleanup does not succeed.
 
 ---
 

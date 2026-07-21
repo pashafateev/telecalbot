@@ -6,7 +6,7 @@ Phase 0 - Critical Research
 This script validates Cal.com API behavior to inform implementation decisions:
 1. Event Type ID discovery
 2. Availability endpoint behavior
-3. Placeholder email acceptance
+3. Placeholder email acceptance with automatic booking cleanup
 4. Rate limits
 5. Meeting method field structure
 """
@@ -18,19 +18,38 @@ from datetime import date, timedelta
 from typing import Any
 
 import httpx
-from decouple import config
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.services.calcom_client import CalComClient
+
+
+class ResearchSettings(BaseSettings):
+    """Configuration for live Cal.com contract research."""
+
+    calcom_api_key: str = ""
+    calcom_event_slug: str = "step"
+    calcom_research_allow_write: bool = False
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 # Configuration
-API_KEY = config("CALCOM_API_KEY", default="")
+settings = ResearchSettings()
+API_KEY = settings.calcom_api_key
 BASE_URL = "https://api.cal.com/v2"
-API_VERSION = config("CAL_API_VERSION", default="2024-06-14")
-EVENT_SLUG = config("CALCOM_EVENT_SLUG", default="step")
+EVENT_SLUG = settings.calcom_event_slug
+ALLOW_LIVE_WRITES = settings.calcom_research_allow_write
+EVENT_TYPES_API_VERSION = "2024-06-14"
+SLOTS_API_VERSION = CalComClient.SLOTS_API_VERSION
+BOOKINGS_API_VERSION = CalComClient.BOOKINGS_API_VERSION
 
-HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
-    "cal-api-version": API_VERSION,
-    "Content-Type": "application/json"
-}
+
+def api_headers(api_version: str) -> dict[str, str]:
+    """Build headers for one versioned Cal.com endpoint."""
+    return {
+        "Authorization": f"Bearer {API_KEY}",
+        "cal-api-version": api_version,
+        "Content-Type": "application/json",
+    }
 
 
 class ResearchResults:
@@ -43,6 +62,8 @@ class ResearchResults:
         self.rate_limit_headers = {}
         self.meeting_method_field = None
         self.test_booking_id = None
+        self.test_booking_uid = None
+        self.booking_cleanup_succeeded = None
         self.errors = []
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +75,8 @@ class ResearchResults:
             "rate_limit_headers": self.rate_limit_headers,
             "meeting_method_field": self.meeting_method_field,
             "test_booking_id": self.test_booking_id,
+            "test_booking_uid": self.test_booking_uid,
+            "booking_cleanup_succeeded": self.booking_cleanup_succeeded,
             "errors": self.errors,
         }
 
@@ -63,7 +86,10 @@ class ResearchResults:
         print("CAL.COM API RESEARCH RESULTS")
         print("="*70 + "\n")
 
-        print(f"API Version: {API_VERSION}")
+        print("API Versions:")
+        print(f"  Event types: {EVENT_TYPES_API_VERSION}")
+        print(f"  Slots: {SLOTS_API_VERSION}")
+        print(f"  Bookings: {BOOKINGS_API_VERSION}")
         print(f"Base URL: {BASE_URL}\n")
 
         print("1. EVENT TYPE DISCOVERY")
@@ -122,7 +148,11 @@ class ResearchResults:
             print("6. TEST BOOKING")
             print("-" * 70)
             print(f"✅ Test booking created: {self.test_booking_id}")
-            print("   IMPORTANT: Check Google Calendar to verify sync!")
+            print(f"   UID: {self.test_booking_uid or 'missing'}")
+            if self.booking_cleanup_succeeded:
+                print("✅ Test booking cancelled automatically")
+            elif self.booking_cleanup_succeeded is False:
+                print("❌ Automatic cleanup failed; use the UID above for manual recovery")
             print()
 
         if self.errors:
@@ -163,7 +193,10 @@ async def fetch_event_types(client: httpx.AsyncClient, results: ResearchResults)
     print(f"[1/5] Fetching event types to find '{EVENT_SLUG}'...")
 
     try:
-        response = await client.get("/event-types", headers=HEADERS)
+        response = await client.get(
+            "/event-types",
+            headers=api_headers(EVENT_TYPES_API_VERSION),
+        )
         response.raise_for_status()
 
         data = response.json()
@@ -206,12 +239,16 @@ async def test_availability(client: httpx.AsyncClient, results: ResearchResults)
 
         params = {
             "eventTypeId": results.event_type_id,
-            "startTime": f"{today.isoformat()}T00:00:00Z",
-            "endTime": f"{end_date.isoformat()}T23:59:59Z",
-            "timeZone": "Europe/Moscow"
+            "start": today.isoformat(),
+            "end": end_date.isoformat(),
+            "timeZone": "Europe/Moscow",
         }
 
-        response = await client.get("/slots/available", params=params, headers=HEADERS)
+        response = await client.get(
+            "/slots",
+            params=params,
+            headers=api_headers(SLOTS_API_VERSION),
+        )
         response.raise_for_status()
 
         # Check for rate limit headers
@@ -222,8 +259,15 @@ async def test_availability(client: httpx.AsyncClient, results: ResearchResults)
         data = response.json()
         results.availability_sample = data.get("data", {})
 
-        slot_count = sum(len(times) for times in results.availability_sample.get("slots", {}).values())
-        print(f"  ✅ Availability fetched: {slot_count} slots across {len(results.availability_sample.get('slots', {}))} days")
+        slot_count = sum(
+            len(slots)
+            for slots in results.availability_sample.values()
+            if isinstance(slots, list)
+        )
+        print(
+            f"  ✅ Availability fetched: {slot_count} slots "
+            f"across {len(results.availability_sample)} days"
+        )
 
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
@@ -243,21 +287,29 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
         results.errors.append("Placeholder email test skipped - no event type ID")
         return
 
-    if not results.availability_sample or not results.availability_sample.get("slots"):
+    if not results.availability_sample:
         print("[3/5] Skipping placeholder email test (no available slots)")
         results.errors.append("Placeholder email test skipped - no available slots")
         return
 
+    if not ALLOW_LIVE_WRITES:
+        print("[3/5] Skipping live booking test (CALCOM_RESEARCH_ALLOW_WRITE is not true)")
+        return
+
     print("[3/5] Testing placeholder email acceptance...")
 
+    booking_uid = None
     try:
         # Get first available slot
-        slots = results.availability_sample["slots"]
+        slots = results.availability_sample
         first_date = sorted(slots.keys())[0]
         first_slot = slots[first_date][0]
 
-        # Extract time from slot object (API v2 returns {time: "ISO timestamp"})
-        start_datetime = first_slot.get("time") if isinstance(first_slot, dict) else first_slot
+        # Current slots use "start"; retain "time" for older captured responses.
+        if isinstance(first_slot, dict):
+            start_datetime = first_slot.get("start") or first_slot.get("time")
+        else:
+            start_datetime = first_slot
 
         # Test booking with placeholder email
         test_booking = {
@@ -276,21 +328,36 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
         }
 
         # Use booking-specific API version header
-        booking_headers = HEADERS.copy()
-        booking_headers["cal-api-version"] = "2024-08-13"
-
         print(f"  Testing booking at: {start_datetime}")
-        response = await client.post("/bookings", json=test_booking, headers=booking_headers)
+        response = await client.post(
+            "/bookings",
+            json=test_booking,
+            headers=api_headers(BOOKINGS_API_VERSION),
+        )
 
         if response.status_code == 201:
             data = response.json()
-            results.test_booking_id = data.get("data", {}).get("id")
+            booking_data = data.get("data", {})
+            results.test_booking_id = booking_data.get("id")
+            results.test_booking_uid = booking_data.get("uid")
+            if isinstance(results.test_booking_uid, str) and results.test_booking_uid:
+                booking_uid = results.test_booking_uid
+            else:
+                results.booking_cleanup_succeeded = False
+                error_msg = (
+                    "Test booking was created without a UID; automatic cleanup is impossible "
+                    f"(booking ID: {results.test_booking_id})"
+                )
+                print(f"  ❌ {error_msg}")
+                results.errors.append(error_msg)
+
             results.placeholder_email_works = True
-            print(f"  ✅ Placeholder email ACCEPTED - Booking ID: {results.test_booking_id}")
-            print("  ⚠️  IMPORTANT: Check Google Calendar to verify this booking!")
+            print(
+                "  ✅ Placeholder email ACCEPTED - "
+                f"Booking ID: {results.test_booking_id}, UID: {results.test_booking_uid}"
+            )
 
             # Try to identify meeting method field
-            booking_data = data.get("data", {})
             if "meetingUrl" in booking_data:
                 results.meeting_method_field = "meetingUrl"
             elif "metadata" in booking_data and "meeting_method" in booking_data["metadata"]:
@@ -315,6 +382,33 @@ async def test_placeholder_email(client: httpx.AsyncClient, results: ResearchRes
     except Exception as e:
         print(f"  ❌ Error: {e}")
         results.errors.append(f"Placeholder email test error: {str(e)}")
+    finally:
+        if booking_uid:
+            await cancel_test_booking(client, booking_uid, results)
+
+
+async def cancel_test_booking(
+    client: httpx.AsyncClient,
+    booking_uid: str,
+    results: ResearchResults,
+) -> None:
+    """Cancel a live research booking and retain its UID if cleanup fails."""
+    print(f"  Cleaning up test booking UID: {booking_uid}...")
+    try:
+        response = await client.post(
+            f"/bookings/{booking_uid}/cancel",
+            json={},
+            headers=api_headers(BOOKINGS_API_VERSION),
+        )
+        response.raise_for_status()
+    except Exception as error:
+        results.booking_cleanup_succeeded = False
+        error_msg = f"Test booking cleanup failed for UID {booking_uid}: {error}"
+        print(f"  ❌ {error_msg}")
+        results.errors.append(error_msg)
+    else:
+        results.booking_cleanup_succeeded = True
+        print("  ✅ Test booking cancelled")
 
 
 async def test_rate_limits(client: httpx.AsyncClient, results: ResearchResults):
@@ -330,13 +424,15 @@ async def test_rate_limits(client: httpx.AsyncClient, results: ResearchResults):
         print("  Decision: Use conservative 60 requests/minute ceiling")
 
 
-async def check_api_version(client: httpx.AsyncClient, results: ResearchResults):
+async def check_api_versions(client: httpx.AsyncClient, results: ResearchResults):
     """
     Test 5: Verify API version is current
     """
     print("[5/5] Verifying API version...")
-    print(f"  Using version: {API_VERSION}")
-    print("  ✅ Version header will be sent with all requests")
+    print(f"  Event types: {EVENT_TYPES_API_VERSION}")
+    print(f"  Slots: {SLOTS_API_VERSION}")
+    print(f"  Bookings: {BOOKINGS_API_VERSION}")
+    print("  ✅ Endpoint-specific version headers will be sent")
 
 
 async def save_results(results: ResearchResults):
@@ -372,7 +468,7 @@ async def main():
         await test_availability(client, results)
         await test_placeholder_email(client, results)
         await test_rate_limits(client, results)
-        await check_api_version(client, results)
+        await check_api_versions(client, results)
 
     # Print summary
     results.print_summary()
@@ -383,6 +479,18 @@ async def main():
     # Exit with error code if critical tests failed
     if not results.event_type_id:
         print("❌ CRITICAL: Event Type ID not found - cannot proceed with implementation")
+        sys.exit(1)
+
+    if results.booking_cleanup_succeeded is False:
+        recovery_reference = (
+            f"UID {results.test_booking_uid}"
+            if results.test_booking_uid
+            else f"numeric booking ID {results.test_booking_id}"
+        )
+        print(
+            "❌ CRITICAL: Test booking cleanup failed; "
+            f"manual recovery reference: {recovery_reference}"
+        )
         sys.exit(1)
 
     print("✅ Research complete! Review findings above to inform implementation.")

@@ -141,9 +141,11 @@ class TestCalComClient:
         """Create a CalComClient instance for testing."""
         return CalComClient(
             api_key="test_key",
-            api_version="2024-06-14",
             cache_ttl=300,
         )
+
+    def test_client_has_no_ambient_api_version_header(self, client):
+        assert "cal-api-version" not in client._client.headers
 
     @pytest.mark.asyncio
     async def test_get_availability_returns_parsed_response(self, client):
@@ -175,11 +177,19 @@ class TestCalComClient:
             mock_request.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_availability_sends_requested_duration(self, client):
-        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {"status": "success", "data": {"slots": {}}}
+    async def test_get_availability_uses_current_slots_endpoint_version(self, client):
+        """Availability requests pin the API version required by /v2/slots."""
+        mock_response = {
+            "status": "success",
+            "data": {
+                "2026-01-01": [{"start": "2026-01-01T10:00:00.000+03:00"}],
+            },
+        }
 
-            await client.get_availability(
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            result = await client.get_availability(
                 event_type_id=123,
                 start_date=date(2026, 1, 1),
                 end_date=date(2026, 1, 7),
@@ -187,7 +197,35 @@ class TestCalComClient:
                 duration_minutes=120,
             )
 
-        assert mock_request.call_args.kwargs["params"]["duration"] == 120
+        method, path = mock_request.call_args.args
+        kwargs = mock_request.call_args.kwargs
+        assert method == "GET"
+        assert path == "/slots"
+        assert kwargs["api_version"] == "2024-09-04"
+        assert kwargs["params"] == {
+            "eventTypeId": 123,
+            "start": "2026-01-01",
+            "end": "2026-01-07",
+            "timeZone": "Europe/Moscow",
+            "duration": 120,
+        }
+        assert result.slots["2026-01-01"][0].time == "2026-01-01T10:00:00.000+03:00"
+
+    def test_parse_availability_ignores_malformed_slot_shapes(self, client):
+        result = client._parse_availability(
+            {
+                "2026-01-01": {"start": "2026-01-01T10:00:00.000Z"},
+                "2026-01-02": [
+                    None,
+                    123,
+                    {"start": "2026-01-02T10:00:00.000Z"},
+                ],
+            }
+        )
+
+        assert result.slots == {
+            "2026-01-02": [TimeSlot(time="2026-01-02T10:00:00.000Z")],
+        }
 
     @pytest.mark.asyncio
     async def test_get_availability_omits_duration_without_override(self, client):
@@ -365,6 +403,7 @@ class TestCalComClient:
             assert isinstance(result, BookingResponse)
             assert result.id == 123
             assert result.status == "accepted"
+            assert mock_request.call_args.kwargs["api_version"] == "2026-02-25"
 
     @pytest.mark.asyncio
     async def test_create_booking_omits_none_duration_override(self, client):
@@ -473,11 +512,12 @@ class TestCalComClient:
             assert mock_request.call_count == 1
 
             mock_request.return_value = {"status": "success", "data": {}}
-            await client.cancel_booking(123)
+            await client.cancel_booking("booking_uid_123")
 
             method, path = mock_request.call_args_list[1][0]
             assert method == "POST"
-            assert path == "/bookings/123/cancel"
+            assert path == "/bookings/booking_uid_123/cancel"
+            assert mock_request.call_args_list[1].kwargs["api_version"] == "2026-02-25"
 
             mock_request.return_value = avail_response
             await client.get_availability(
@@ -497,7 +537,6 @@ class TestCalComClientRetry:
     def client(self):
         return CalComClient(
             api_key="test_key",
-            api_version="2024-06-14",
             cache_ttl=300,
         )
 
@@ -541,7 +580,12 @@ class TestCalComClientRetry:
             return_value=response,
         ):
             with pytest.raises(CalComAPIError) as exc_info:
-                await client._request("POST", "/bookings", json={})
+                await client._request(
+                    "POST",
+                    "/bookings",
+                    api_version="2026-02-25",
+                    json={},
+                )
 
         assert exc_info.value.status_code == 400
         assert exc_info.value.code == "email_domain_cannot_receive_mail"
@@ -565,11 +609,94 @@ class TestCalComClientRetry:
                 ),
             ]
 
-            result = await client._request("GET", "/test")
+            result = await client._request(
+                "GET",
+                "/test",
+                api_version="test-version",
+            )
 
             assert result == {"status": "success", "data": {"ok": True}}
             assert mock_request.call_count == 2
             mock_sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    async def test_request_sends_explicit_api_version_header(self, client):
+        response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://api.cal.com/v2/test"),
+            json={"status": "success", "data": {"ok": True}},
+        )
+
+        with patch.object(
+            client._client,
+            "request",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as mock_request:
+            await client._request(
+                "GET",
+                "/test",
+                api_version="2024-09-04",
+                headers={"X-Request-ID": "request-1"},
+            )
+
+        assert mock_request.call_args.kwargs["headers"] == {
+            "X-Request-ID": "request-1",
+            "cal-api-version": "2024-09-04",
+        }
+
+    @pytest.mark.asyncio
+    async def test_uses_retry_after_header_for_rate_limits(self, client):
+        request = httpx.Request("GET", "https://api.cal.com/v2/test")
+        rate_limited = httpx.Response(
+            429,
+            text="rate limited",
+            headers={"Retry-After": "2"},
+            request=request,
+        )
+
+        with (
+            patch.object(client._client, "request", new_callable=AsyncMock) as mock_request,
+            patch("app.services.calcom_client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            mock_request.side_effect = [
+                httpx.HTTPStatusError(
+                    message="rate limited",
+                    request=request,
+                    response=rate_limited,
+                ),
+                httpx.Response(
+                    200,
+                    request=request,
+                    json={"status": "success", "data": {"ok": True}},
+                ),
+            ]
+
+            await client._request(
+                "GET",
+                "/test",
+                api_version="test-version",
+            )
+
+        mock_sleep.assert_awaited_once_with(2.0)
+
+    @pytest.mark.parametrize(
+        ("retry_after", "expected_delay"),
+        [
+            ("300", 10.0),
+            ("inf", 0.5),
+            ("nan", 0.5),
+            ("-2", 0.0),
+            ("Wed, 21 Oct 2015 07:28:00 GMT", 0.5),
+        ],
+    )
+    def test_bounds_retry_after_delay(self, client, retry_after, expected_delay):
+        response = httpx.Response(
+            429,
+            headers={"Retry-After": retry_after},
+        )
+
+        assert client._retry_delay_seconds(response, 0.5) == expected_delay
 
     @pytest.mark.asyncio
     async def test_does_not_retry_non_retryable_status(self, client):
@@ -584,7 +711,11 @@ class TestCalComClientRetry:
             mock_request.side_effect = [self._http_status_error(400, "bad request")]
 
             with pytest.raises(CalComAPIError) as exc_info:
-                await client._request("GET", "/test")
+                await client._request(
+                    "GET",
+                    "/test",
+                    api_version="test-version",
+                )
 
             assert exc_info.value.status_code == 400
             assert mock_request.call_count == 1
@@ -605,7 +736,11 @@ class TestCalComClientRetry:
             ]
 
             with pytest.raises(CalComAPIError) as exc_info:
-                await client._request("GET", "/test")
+                await client._request(
+                    "GET",
+                    "/test",
+                    api_version="test-version",
+                )
 
             assert exc_info.value.status_code == 503
             assert mock_request.call_count == 4
@@ -620,7 +755,6 @@ class TestCalComClientClose:
         """Client can be closed properly."""
         client = CalComClient(
             api_key="test_key",
-            api_version="2024-06-14",
         )
 
         with patch.object(client._client, "aclose", new_callable=AsyncMock) as mock:
@@ -632,7 +766,6 @@ class TestCalComClientClose:
         """Client works as async context manager."""
         async with CalComClient(
             api_key="test_key",
-            api_version="2024-06-14",
         ) as client:
             assert client is not None
 
