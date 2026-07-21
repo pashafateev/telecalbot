@@ -76,7 +76,7 @@ Delivery mode:
 - `TELEGRAM_DELIVERY_MODE=polling` is the default and is intended for local development.
 - `TELEGRAM_DELIVERY_MODE=webhook` starts an HTTP server for Telegram webhooks and health checks.
 - `TELEGRAM_WEBHOOK_URL` is required in webhook mode.
-- `TELEGRAM_WEBHOOK_SECRET_TOKEN` is optional locally and recommended in production.
+- `TELEGRAM_WEBHOOK_SECRET_TOKEN` is required in webhook mode and rejects forged update payloads.
 
 See `.env.sample` for a complete list of configuration options.
 
@@ -87,6 +87,8 @@ Fly runs the bot in webhook mode on port `8080`. The configured production webho
 ```text
 https://telecalbot.fly.dev/telegram/webhook
 ```
+
+Fly currently keeps one machine running because booking conversations and timeout reminders are stored in process memory. Scale-to-zero must remain disabled until that state is persisted.
 
 Set production secrets before deploying:
 

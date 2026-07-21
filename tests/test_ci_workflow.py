@@ -22,7 +22,7 @@ def test_fly_uses_webhook_http_delivery():
     assert config["env"]["TELEGRAM_DELIVERY_MODE"] == "webhook"
     assert config["env"]["TELEGRAM_WEBHOOK_PATH"] == "/telegram/webhook"
     assert config["http_service"]["internal_port"] == 8080
-    assert config["http_service"]["auto_stop_machines"] == "stop"
+    assert config["http_service"]["auto_stop_machines"] == "off"
     assert config["http_service"]["auto_start_machines"] is True
-    assert config["http_service"]["min_machines_running"] == 0
+    assert config["http_service"]["min_machines_running"] == 1
     assert config["http_service"]["checks"][0]["path"] == "/healthz"

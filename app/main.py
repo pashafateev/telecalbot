@@ -140,12 +140,12 @@ def main() -> None:
 
     application = create_application()
 
-    logger.info("Bot started. Press Ctrl+C to stop.")
-
     if settings.telegram_delivery_mode == "webhook":
+        logger.info("Starting Telegram webhook delivery.")
         run_webhook(application, settings)
         return
 
+    logger.info("Starting Telegram polling. Press Ctrl+C to stop.")
     application.run_polling()
 
 

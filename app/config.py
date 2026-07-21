@@ -1,9 +1,9 @@
 """Application configuration loaded from environment variables."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from app.constants import SUPPORTED_BOOKING_DURATIONS
@@ -67,6 +67,17 @@ class Settings(BaseSettings):
         if isinstance(value, str) and value.strip() == "":
             return None
         return value
+
+    @model_validator(mode="after")
+    def webhook_mode_requires_authenticated_endpoint(self) -> Self:
+        """Reject webhook mode unless its public URL and shared secret are configured."""
+        if self.telegram_delivery_mode != "webhook":
+            return self
+        if not self.telegram_webhook_url:
+            raise ValueError("TELEGRAM_WEBHOOK_URL is required in webhook mode")
+        if not self.telegram_webhook_secret_token:
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET_TOKEN is required in webhook mode")
+        return self
 
     def resolve_event_type(self, duration_minutes: int) -> ResolvedEventType:
         """Resolve an event type and the duration override Cal.com expects.

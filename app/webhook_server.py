@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import signal
@@ -22,15 +23,6 @@ def normalize_route_path(path: str) -> str:
     """Return a Tornado route path with one leading slash and no trailing slash."""
     normalized = f"/{path.strip('/')}"
     return "/" if normalized == "/" else normalized
-
-
-def normalize_optional_token(token: str | None) -> str | None:
-    """Return None for blank optional secret-token settings."""
-    if token is None:
-        return None
-    if token.strip() == "":
-        return None
-    return token
 
 
 class HealthHandler(tornado.web.RequestHandler):
@@ -69,7 +61,7 @@ class TelegramWebhookHandler(tornado.web.RequestHandler):
     def initialize(
         self,
         telegram_application: Application,
-        secret_token: str | None,
+        secret_token: str,
     ) -> None:
         self.telegram_application = telegram_application
         self.secret_token = secret_token
@@ -109,15 +101,12 @@ class TelegramWebhookHandler(tornado.web.RequestHandler):
         content_type = self.request.headers.get("Content-Type", "")
         if content_type.split(";", maxsplit=1)[0].strip() != "application/json":
             raise tornado.web.HTTPError(
-                HTTPStatus.FORBIDDEN,
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
                 reason="Webhook requests must be JSON",
             )
 
-        if self.secret_token is None:
-            return
-
-        actual = self.request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if actual != self.secret_token:
+        actual = self.request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(actual, self.secret_token):
             raise tornado.web.HTTPError(
                 HTTPStatus.FORBIDDEN,
                 reason="Webhook secret token is missing or invalid",
@@ -128,7 +117,7 @@ def build_webhook_application(
     *,
     application: Application,
     readiness: asyncio.Event,
-    secret_token: str | None,
+    secret_token: str,
     webhook_path: str,
     health_path: str,
     readiness_path: str,
@@ -137,8 +126,6 @@ def build_webhook_application(
     webhook_route = normalize_route_path(webhook_path)
     health_route = normalize_route_path(health_path)
     readiness_route = normalize_route_path(readiness_path)
-    normalized_secret_token = normalize_optional_token(secret_token)
-
     return tornado.web.Application(
         [
             (rf"{health_route}/?", HealthHandler),
@@ -146,7 +133,7 @@ def build_webhook_application(
             (
                 rf"{webhook_route}/?",
                 TelegramWebhookHandler,
-                {"telegram_application": application, "secret_token": normalized_secret_token},
+                {"telegram_application": application, "secret_token": secret_token},
             ),
         ]
     )
@@ -157,14 +144,23 @@ def run_webhook(application: Application, app_settings: Settings) -> None:
     asyncio.run(serve_webhook(application, app_settings))
 
 
-async def serve_webhook(application: Application, app_settings: Settings) -> None:
+async def serve_webhook(
+    application: Application,
+    app_settings: Settings,
+    *,
+    stop_event: asyncio.Event | None = None,
+) -> None:
     """Start Telegram webhook delivery and block until the process is stopped."""
     if not app_settings.telegram_webhook_url:
         raise ValueError("TELEGRAM_WEBHOOK_URL is required when TELEGRAM_DELIVERY_MODE=webhook")
+    if not app_settings.telegram_webhook_secret_token:
+        raise ValueError(
+            "TELEGRAM_WEBHOOK_SECRET_TOKEN is required when TELEGRAM_DELIVERY_MODE=webhook"
+        )
 
-    secret_token = normalize_optional_token(app_settings.telegram_webhook_secret_token)
+    secret_token = app_settings.telegram_webhook_secret_token
     readiness = asyncio.Event()
-    stop_event = asyncio.Event()
+    configured_stop_event = stop_event or asyncio.Event()
     web_app = build_webhook_application(
         application=application,
         readiness=readiness,
@@ -175,18 +171,30 @@ async def serve_webhook(application: Application, app_settings: Settings) -> Non
     )
     server = HTTPServer(web_app)
     initialized = False
+    started = False
 
-    loop = asyncio.get_running_loop()
-    for signame in ("SIGINT", "SIGTERM"):
-        signum = getattr(signal, signame, None)
-        if signum is None:
-            continue
-        try:
-            loop.add_signal_handler(signum, stop_event.set)
-        except NotImplementedError:
-            pass
+    if stop_event is None:
+        loop = asyncio.get_running_loop()
+        for signame in ("SIGINT", "SIGTERM"):
+            signum = getattr(signal, signame, None)
+            if signum is None:
+                continue
+            try:
+                loop.add_signal_handler(signum, configured_stop_event.set)
+            except NotImplementedError:
+                pass
 
     try:
+        server.listen(
+            app_settings.telegram_webhook_port,
+            address=app_settings.telegram_webhook_listen,
+        )
+        logger.info(
+            "Webhook server listening on %s:%s",
+            app_settings.telegram_webhook_listen,
+            app_settings.telegram_webhook_port,
+        )
+
         await application.initialize()
         initialized = True
         if application.post_init:
@@ -198,27 +206,24 @@ async def serve_webhook(application: Application, app_settings: Settings) -> Non
             secret_token=secret_token,
         )
         await application.start()
+        started = True
         readiness.set()
-
-        server.listen(
-            app_settings.telegram_webhook_port,
-            address=app_settings.telegram_webhook_listen,
-        )
-        logger.info(
-            "Webhook server listening on %s:%s",
-            app_settings.telegram_webhook_listen,
-            app_settings.telegram_webhook_port,
-        )
-        await stop_event.wait()
+        logger.info("Telegram webhook delivery is ready")
+        await configured_stop_event.wait()
     finally:
         readiness.clear()
         server.stop()
         await server.close_all_connections()
-        await _shutdown_application(application, initialized=initialized)
+        await _shutdown_application(application, initialized=initialized, started=started)
 
 
-async def _shutdown_application(application: Application, *, initialized: bool) -> None:
-    if application.running:
+async def _shutdown_application(
+    application: Application,
+    *,
+    initialized: bool,
+    started: bool,
+) -> None:
+    if started:
         await application.stop()
         if application.post_stop:
             await application.post_stop(application)

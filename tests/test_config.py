@@ -61,6 +61,32 @@ def test_blank_optional_webhook_settings_are_unset():
     assert settings.telegram_webhook_secret_token is None
 
 
+@pytest.mark.parametrize(
+    ("overrides", "missing_setting"),
+    [
+        ({"telegram_webhook_secret_token": "secret"}, "TELEGRAM_WEBHOOK_URL"),
+        ({"telegram_webhook_url": "https://example.com/webhook"}, "TELEGRAM_WEBHOOK_SECRET_TOKEN"),
+    ],
+)
+def test_webhook_mode_requires_url_and_secret(overrides, missing_setting):
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match=missing_setting):
+        Settings(telegram_delivery_mode="webhook", **overrides)
+
+
+def test_webhook_mode_accepts_authenticated_configuration():
+    from app.config import Settings
+
+    settings = Settings(
+        telegram_delivery_mode="webhook",
+        telegram_webhook_url="https://example.com/webhook",
+        telegram_webhook_secret_token="secret",
+    )
+
+    assert settings.telegram_delivery_mode == "webhook"
+
+
 def test_get_event_type_id_with_duration_specific():
     """Test get_event_type_id returns duration-specific IDs."""
     from app.config import Settings
