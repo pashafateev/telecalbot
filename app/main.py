@@ -19,6 +19,7 @@ from app.handlers import (
     approve_command,
     create_booking_conversation_handler,
     create_cancel_booking_flow_handlers,
+    create_privacy_conversation_handler,
     help_command,
     pending_command,
     reject_command,
@@ -81,6 +82,7 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("setlimit", setlimit_command))
     application.add_handler(CommandHandler("removelimit", removelimit_command))
     application.add_handler(CommandHandler("limits", limits_command))
+    application.add_handler(create_privacy_conversation_handler())
     application.add_handler(create_booking_conversation_handler())
     for handler in create_cancel_booking_flow_handlers():
         application.add_handler(handler)
@@ -99,6 +101,7 @@ def create_application() -> Application:
                 BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
                 BotCommand("cancel_booking", "Отменить запись"),
+                BotCommand("privacy", "Управлять сохраненными данными"),
                 BotCommand("help", "Показать список команд"),
             ]
         )
@@ -109,6 +112,7 @@ def create_application() -> Application:
                 BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
                 BotCommand("cancel_booking", "Отменить запись"),
+                BotCommand("privacy", "Управлять сохраненными данными"),
                 BotCommand("help", "Показать список команд"),
                 BotCommand("pending", "Список ожидающих запросов"),
                 BotCommand("setlimit", "Установить лимит длительности"),

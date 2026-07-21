@@ -76,9 +76,7 @@ async def test_privacy_displays_masked_profile_without_whitelist_access(profile_
     ("mode", "expected"),
     [("private", "без личного email"), ("ask", "спрашивать каждый раз")],
 )
-async def test_privacy_displays_private_and_ask_email_modes(
-    profile_service, mode, expected
-):
+async def test_privacy_displays_private_and_ask_email_modes(profile_service, mode, expected):
     profile_service.save_preferred_name(12345, "Alice")
     if mode == "private":
         profile_service.save_private_email_mode(12345)
@@ -101,9 +99,7 @@ async def test_privacy_callbacks_are_opaque(profile_service):
     await handlers.privacy_command(update, context)
 
     keyboard = update.message.reply_text.call_args.kwargs["reply_markup"]
-    callbacks = [
-        button.callback_data for row in keyboard.inline_keyboard for button in row
-    ]
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     serialized = " ".join(callbacks)
     assert "Alice" not in serialized
     assert "Europe/Moscow" not in serialized
@@ -163,21 +159,17 @@ async def test_privacy_changes_name_timezone_and_email(profile_service):
     context = _context(profile_service)
 
     name_update = _message_update("New Name")
-    assert (
-        await handlers.privacy_enter_name(name_update, context)
-        == handlers.PrivacyState.END
-    )
+    assert await handlers.privacy_enter_name(name_update, context) == handlers.PrivacyState.VIEWING
 
     timezone_update = _callback_update("privacy_tz:3")
     assert (
         await handlers.privacy_select_timezone(timezone_update, context)
-        == handlers.PrivacyState.END
+        == handlers.PrivacyState.VIEWING
     )
 
     email_update = _message_update("new@example.com")
     assert (
-        await handlers.privacy_enter_email(email_update, context)
-        == handlers.PrivacyState.END
+        await handlers.privacy_enter_email(email_update, context) == handlers.PrivacyState.VIEWING
     )
 
     profile = profile_service.get_profile(12345)
