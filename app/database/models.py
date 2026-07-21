@@ -1,6 +1,7 @@
 """Pydantic models for database entities."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -25,12 +26,19 @@ class AccessRequest(BaseModel):
     status: str = "pending"  # pending, approved, rejected
 
 
-class UserPreference(BaseModel):
-    """User preferences (timezone, etc.)."""
+class UserProfile(BaseModel):
+    """Explicitly consented booking profile fields."""
 
     telegram_id: int
-    timezone: str
+    preferred_name: str | None = None
+    timezone: str | None = None
+    email_mode: Literal["ask", "private", "saved"] = "ask"
+    email: str | None = None
     updated_at: datetime
+
+
+# Compatibility for code/tests written against the original timezone-only model.
+UserPreference = UserProfile
 
 
 class StoredBooking(BaseModel):

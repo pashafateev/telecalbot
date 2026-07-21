@@ -17,6 +17,10 @@ RUSSIAN_TIMEZONES = [
     ("Asia/Kamchatka", "Камчатка (UTC+12)"),
 ]
 
+SUPPORTED_TIMEZONE_IDS = frozenset(
+    timezone_id for timezone_id, _ in RUSSIAN_TIMEZONES
+)
+
 # Default timezone
 DEFAULT_TIMEZONE = "Europe/Moscow"
 
