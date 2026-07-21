@@ -33,6 +33,7 @@ from app.handlers.duration_limit import (
 from app.services.booking_service import BookingService
 from app.services.calcom_client import CalComClient
 from app.services.duration_limit import DurationLimitService
+from app.services.user_preferences import UserPreferenceService
 from app.services.whitelist import WhitelistService
 from app.webhook_server import run_webhook
 
@@ -66,6 +67,7 @@ def create_application() -> Application:
 
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
+    application.bot_data["user_preference_service"] = UserPreferenceService(db)
     application.bot_data["duration_limit_service"] = DurationLimitService(db)
     application.bot_data["booking_service"] = BookingService(db)
     application.bot_data["calcom_client"] = CalComClient(api_key=settings.calcom_api_key)
