@@ -103,6 +103,7 @@ BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
         "remembered_profile_fields",
         "edit_field",
         "internal_ref",
+        "active_user_conversation",
     }
 )
 EMAIL_DOMAIN_CANNOT_RECEIVE_MAIL = "email_domain_cannot_receive_mail"
@@ -1214,6 +1215,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"{email_note}",
         )
         _cancel_booking_timeout_reminder(context, update.effective_user.id)
+        _clear_booking_scoped_state(context)
         return ConversationHandler.END
 
     except CalComAPIError as e:

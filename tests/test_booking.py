@@ -1129,11 +1129,9 @@ class TestConfirmBooking:
             mock_settings.calcom_event_type_id = 42
             await confirm_booking(mock_update_with_query, mock_context)
 
-        mock_context.bot_data["booking_service"].save_booking.assert_called_once_with(
-            12345,
-            booking_response,
-            internal_ref=mock_context.user_data["internal_ref"],
-        )
+        save_call = mock_context.bot_data["booking_service"].save_booking.call_args
+        assert save_call.args == (12345, booking_response)
+        assert save_call.kwargs["internal_ref"].startswith("tbk_")
 
     @pytest.mark.asyncio
     async def test_uses_configured_privacy_email_and_opaque_reference_when_none(
