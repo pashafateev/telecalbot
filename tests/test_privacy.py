@@ -1,10 +1,13 @@
 """Tests for the reversible /privacy booking-profile flow."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.ext import CommandHandler, ConversationHandler
 
 from app import handlers
+from app.config import settings
 from app.database import Database
 from app.database.migrations import initialize_schema
 from app.services.user_preferences import UserPreferenceService
@@ -156,7 +159,7 @@ async def test_privacy_deletes_complete_profile_for_non_whitelisted_user(
 @pytest.mark.asyncio
 async def test_privacy_changes_name_timezone_and_email(profile_service):
     profile_service.save_private_email_mode(12345)
-    context = _context(profile_service)
+    context = _context(profile_service, whitelisted=True)
 
     name_update = _message_update("New Name")
     assert await handlers.privacy_enter_name(name_update, context) == handlers.PrivacyState.VIEWING
@@ -187,6 +190,87 @@ def test_privacy_conversation_registers_command_and_edit_states():
     assert handlers.PrivacyState.ENTERING_NAME in conversation.states
     assert handlers.PrivacyState.SELECTING_TIMEZONE in conversation.states
     assert handlers.PrivacyState.ENTERING_EMAIL in conversation.states
+    assert ConversationHandler.TIMEOUT in conversation.states
+    assert conversation.conversation_timeout == timedelta(
+        seconds=settings.booking_conversation_timeout_seconds
+    )
+    assert any(
+        isinstance(handler, CommandHandler) and handler.commands == frozenset({"cancel"})
+        for handler in conversation.fallbacks
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    ["privacy:edit_name", "privacy:edit_timezone", "privacy:edit_email", "privacy:private_email"],
+)
+async def test_privacy_blocks_profile_value_writes_without_whitelist_access(
+    profile_service,
+    action,
+):
+    context = _context(profile_service, whitelisted=False)
+    update = _callback_update(action)
+
+    result = await handlers.privacy_callback(update, context)
+
+    assert result == handlers.PrivacyState.VIEWING
+    assert profile_service.get_profile(12345) is None
+    response = update.callback_query.edit_message_text.call_args.args[0]
+    assert "одобрен" in response.lower()
+
+
+@pytest.mark.asyncio
+async def test_privacy_rechecks_whitelist_before_saving_text_input(profile_service):
+    context = _context(profile_service, whitelisted=True)
+    context.user_data["privacy_pending_input"] = "name"
+    context.bot_data["whitelist_service"].is_whitelisted.return_value = False
+    update = _message_update("Booking Name")
+
+    result = await handlers.privacy_enter_name(update, context)
+
+    assert result == handlers.PrivacyState.END
+    assert profile_service.get_profile(12345) is None
+    assert "одобрен" in update.message.reply_text.call_args.args[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_privacy_cancel_clears_pending_input(profile_service):
+    context = _context(profile_service, whitelisted=True)
+    context.user_data["privacy_pending_input"] = "email"
+    update = _message_update("/cancel")
+
+    result = await handlers.privacy_cancel(update, context)
+
+    assert result == handlers.PrivacyState.END
+    assert "privacy_pending_input" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_privacy_timeout_clears_pending_input(profile_service):
+    context = _context(profile_service, whitelisted=True)
+    context.user_data["privacy_pending_input"] = "timezone"
+    update = _message_update()
+
+    result = await handlers.privacy_timeout(update, context)
+
+    assert result == handlers.PrivacyState.END
+    assert "privacy_pending_input" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_invalidated_privacy_input_cannot_save_booking_name(profile_service):
+    context = _context(profile_service, whitelisted=True)
+    context.user_data["privacy_pending_input"] = "name"
+    command_update = _message_update("/book")
+
+    await handlers.invalidate_pending_privacy_input(command_update, context)
+
+    name_update = _message_update("Booking Name")
+    result = await handlers.privacy_enter_name(name_update, context)
+
+    assert result == handlers.PrivacyState.END
+    assert profile_service.get_profile(12345) is None
 
 
 @pytest.mark.asyncio
