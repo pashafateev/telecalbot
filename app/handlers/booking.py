@@ -452,7 +452,9 @@ async def select_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _refresh_booking_timeout_reminder(context, query.from_user.id)
 
     if context.user_data.pop("edit_field", None) == "timezone":
-        return await _show_remembering_edit(query, context)
+        context.user_data.pop("selected_date", None)
+        context.user_data.pop("selected_time", None)
+        return await _show_availability(query, context, offset_days=0)
 
     return await _handle_duration_selection(query, context)
 
