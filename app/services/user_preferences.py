@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from app.constants import SUPPORTED_TIMEZONE_IDS
+from app.constants import MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, SUPPORTED_TIMEZONE_IDS
 from app.database import Database
 from app.database.models import UserProfile
 
@@ -36,6 +36,8 @@ class UserPreferenceService:
         value = preferred_name.strip()
         if not value:
             raise ValueError("Preferred name must not be blank")
+        if len(value) > MAX_NAME_LENGTH:
+            raise ValueError("Preferred name is too long")
         self._upsert(telegram_id, "preferred_name", value)
 
     def clear_preferred_name(self, telegram_id: int) -> None:
@@ -57,6 +59,8 @@ class UserPreferenceService:
         value = email.strip()
         if not value:
             raise ValueError("Email must not be blank")
+        if len(value) > MAX_EMAIL_LENGTH:
+            raise ValueError("Email is too long")
         now = self._now()
         self.db.execute_write(
             """

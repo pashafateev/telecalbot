@@ -1,6 +1,8 @@
 """Constants used throughout the application."""
 
 SUPPORTED_BOOKING_DURATIONS = (30, 60, 120)
+MAX_NAME_LENGTH = 100
+MAX_EMAIL_LENGTH = 254
 
 # Russian timezones sorted by UTC offset
 RUSSIAN_TIMEZONES = [

@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import traceback
 
 from telegram import BotCommand
 from telegram.error import NetworkError
@@ -61,8 +62,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     logger.error(
-        "Unhandled exception while processing update error_type=%s",
+        "Unhandled exception while processing update error_type=%s traceback_frames=\n%s",
         type(error).__name__,
+        "".join(traceback.format_tb(error.__traceback__)).rstrip(),
     )
 
 

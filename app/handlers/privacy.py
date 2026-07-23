@@ -5,6 +5,7 @@ from datetime import timedelta
 from enum import IntEnum, auto
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -16,7 +17,7 @@ from telegram.ext import (
 )
 
 from app.config import settings
-from app.constants import RUSSIAN_TIMEZONES
+from app.constants import MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, RUSSIAN_TIMEZONES
 from app.services.user_preferences import UserPreferenceService
 
 logger = logging.getLogger(__name__)
@@ -66,29 +67,31 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if action in PROFILE_VALUE_WRITE_ACTIONS and not _can_write_profile(context, user_id):
         _clear_pending_privacy_input(context)
-        await query.edit_message_text(PROFILE_WRITE_DENIED)
+        await _safe_edit_message_text(query, PROFILE_WRITE_DENIED)
         return PrivacyState.VIEWING
 
     if action == "edit_name":
         context.user_data[PENDING_PRIVACY_INPUT_KEY] = "name"
-        await query.edit_message_text("Введите имя, которое нужно запомнить:")
+        await _safe_edit_message_text(query, "Введите имя, которое нужно запомнить:")
         return PrivacyState.ENTERING_NAME
     if action == "edit_timezone":
         context.user_data[PENDING_PRIVACY_INPUT_KEY] = "timezone"
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             "Выберите часовой пояс, который нужно запомнить:",
             reply_markup=_privacy_timezone_keyboard(),
         )
         return PrivacyState.SELECTING_TIMEZONE
     if action == "edit_email":
         context.user_data[PENDING_PRIVACY_INPUT_KEY] = "email"
-        await query.edit_message_text("Введите email, который нужно запомнить:")
+        await _safe_edit_message_text(query, "Введите email, который нужно запомнить:")
         return PrivacyState.ENTERING_EMAIL
     if action == "back":
         _clear_pending_privacy_input(context)
     if action == "delete_confirm":
         _clear_pending_privacy_input(context)
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             f"Удалить все сохраненные настройки профиля?\n\n{PROFILE_DELETE_NOTICE}",
             reply_markup=InlineKeyboardMarkup(
                 [
@@ -109,12 +112,14 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             service.clear_profile(user_id)
         except Exception as error:
             _log_storage_failure("delete", user_id, error)
-            await query.edit_message_text(
+            await _safe_edit_message_text(
+                query,
                 "Не удалось удалить сохраненный профиль. Попробуйте позже.\n\n"
                 f"{PROFILE_DELETE_NOTICE}"
             )
             return PrivacyState.VIEWING
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             f"Сохраненный профиль удален.\n\n{PROFILE_DELETE_NOTICE}\n{TELEGRAM_ACCESS_NOTICE}"
         )
         return PrivacyState.END
@@ -132,13 +137,15 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             operation()
         except Exception as error:
             _log_storage_failure("update", user_id, error)
-            await query.edit_message_text(
+            await _safe_edit_message_text(
+                query,
                 "Не удалось изменить сохраненные данные. Попробуйте позже."
             )
             return PrivacyState.VIEWING
 
     profile = _load_profile(context, user_id)
-    await query.edit_message_text(
+    await _safe_edit_message_text(
+        query,
         _privacy_summary(profile),
         reply_markup=_privacy_keyboard(profile),
     )
@@ -161,8 +168,10 @@ async def privacy_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Попробуйте ещё раз:")
         return PrivacyState.ENTERING_NAME
-    if len(name) > 100:
-        await update.message.reply_text("Имя слишком длинное. Введите до 100 символов:")
+    if len(name) > MAX_NAME_LENGTH:
+        await update.message.reply_text(
+            f"Имя слишком длинное. Введите до {MAX_NAME_LENGTH} символов:"
+        )
         return PrivacyState.ENTERING_NAME
 
     try:
@@ -183,13 +192,14 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     if not _pending_input_matches(context, "timezone"):
-        await query.edit_message_text(
+        await _safe_edit_message_text(
+            query,
             "Редактирование часового пояса отменено. Используйте /privacy, чтобы начать снова."
         )
         return PrivacyState.END
     if not _can_write_profile(context, query.from_user.id):
         _clear_pending_privacy_input(context)
-        await query.edit_message_text(PROFILE_WRITE_DENIED)
+        await _safe_edit_message_text(query, PROFILE_WRITE_DENIED)
         return PrivacyState.END
 
     try:
@@ -204,11 +214,15 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
         _profile_service(context).save_timezone(query.from_user.id, timezone_id)
     except Exception as error:
         _log_storage_failure("save_timezone", query.from_user.id, error)
-        await query.edit_message_text("Не удалось сохранить часовой пояс. Попробуйте позже.")
+        await _safe_edit_message_text(
+            query,
+            "Не удалось сохранить часовой пояс. Попробуйте позже.",
+        )
         return PrivacyState.SELECTING_TIMEZONE
     _clear_pending_privacy_input(context)
     profile = _load_profile(context, query.from_user.id)
-    await query.edit_message_text(
+    await _safe_edit_message_text(
+        query,
         _privacy_summary(profile),
         reply_markup=_privacy_keyboard(profile),
     )
@@ -228,6 +242,12 @@ async def privacy_enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE
         return PrivacyState.END
 
     email = update.message.text.strip()
+    if len(email) > MAX_EMAIL_LENGTH:
+        await update.message.reply_text(
+            f"Email слишком длинный. Введите до {MAX_EMAIL_LENGTH} символов:"
+        )
+        return PrivacyState.ENTERING_EMAIL
+
     if "@" not in email or "." not in email.split("@")[-1]:
         await update.message.reply_text("Некорректный email. Попробуйте ещё раз:")
         return PrivacyState.ENTERING_EMAIL
@@ -270,6 +290,16 @@ async def privacy_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return PrivacyState.END
 
 
+async def _safe_edit_message_text(query, text: str, reply_markup=None) -> None:
+    """Edit a privacy screen while tolerating Telegram's unchanged-content no-op."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as error:
+        if "message is not modified" in str(error).lower():
+            return
+        raise
+
+
 async def _reply_with_profile(update, context) -> None:
     profile = _load_profile(context, update.effective_user.id)
     await update.message.reply_text(
@@ -278,8 +308,8 @@ async def _reply_with_profile(update, context) -> None:
     )
 
 
-def _profile_service(context) -> UserPreferenceService:
-    return context.bot_data["user_preference_service"]
+def _profile_service(context) -> UserPreferenceService | None:
+    return context.bot_data.get("user_preference_service")
 
 
 def _clear_pending_privacy_input(context) -> None:
@@ -307,8 +337,15 @@ def _can_write_profile(context, user_id: int) -> bool:
 
 
 def _load_profile(context, user_id: int):
+    service = _profile_service(context)
+    if service is None:
+        logger.error(
+            "Booking profile storage failure action=load user_id=%s error_type=ServiceMissing",
+            user_id,
+        )
+        return PROFILE_LOAD_FAILED
     try:
-        return _profile_service(context).get_profile(user_id)
+        return service.get_profile(user_id)
     except Exception as error:
         _log_storage_failure("load", user_id, error)
         return PROFILE_LOAD_FAILED

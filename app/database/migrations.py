@@ -30,6 +30,11 @@ USER_PREFERENCES_COLUMNS = {
     "email",
     "updated_at",
 }
+LEGACY_USER_PREFERENCES_COLUMNS = {
+    "telegram_id",
+    "timezone",
+    "updated_at",
+}
 
 SCHEMA = f"""
 -- Whitelist of approved users
@@ -104,6 +109,12 @@ def _migrate_user_preferences_profile(db: Database) -> None:
     columns = {row["name"] for row in table_info}
     if columns == USER_PREFERENCES_COLUMNS:
         return
+    if columns != LEGACY_USER_PREFERENCES_COLUMNS:
+        message = (
+            "Unexpected user_preferences schema; refusing to replace existing data"
+        )
+        logger.error("%s columns=%s", message, ",".join(sorted(columns)))
+        raise RuntimeError(message)
 
     logger.info(
         "Resetting legacy user preferences while migrating to explicit profile consent"

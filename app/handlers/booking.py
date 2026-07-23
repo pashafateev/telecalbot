@@ -20,6 +20,8 @@ from telegram.ext import (
 
 from app.config import settings
 from app.constants import (
+    MAX_EMAIL_LENGTH,
+    MAX_NAME_LENGTH,
     RUSSIAN_TIMEZONES,
     SUPPORTED_BOOKING_DURATIONS,
     SUPPORTED_TIMEZONE_IDS,
@@ -64,7 +66,6 @@ RUSSIAN_MONTHS_ABBR = [
 ]
 
 TIMEZONE_BUTTON_LABEL = "Часовой пояс"
-MAX_NAME_LENGTH = 100
 
 DURATION_OPTIONS = {minutes: f"{minutes} минут" for minutes in SUPPORTED_BOOKING_DURATIONS}
 FIFTH_STEP_RESTRICTION_TEXT = "двухчасовые встречи предназначены только для работы по 5-му шагу."
@@ -778,6 +779,12 @@ async def enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     """Store email and show confirmation."""
     _refresh_booking_timeout_reminder(context, update.effective_user.id)
     email = update.message.text.strip()
+
+    if len(email) > MAX_EMAIL_LENGTH:
+        await update.message.reply_text(
+            f"Email слишком длинный. Введите до {MAX_EMAIL_LENGTH} символов:"
+        )
+        return BookingState.ENTERING_EMAIL
 
     if "@" not in email or "." not in email.split("@")[-1]:
         await update.message.reply_text("Некорректный email. Попробуйте ещё раз:")
