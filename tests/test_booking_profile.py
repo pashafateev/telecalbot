@@ -203,6 +203,38 @@ async def test_editing_saved_field_makes_new_value_selectable_for_consent():
 
 
 @pytest.mark.asyncio
+async def test_editing_timezone_discards_slot_and_requires_reselection(
+    monkeypatch,
+):
+    context = _context()
+    context.user_data = _ready_booking_data(
+        edit_field="timezone",
+        remembered_profile_fields={"name", "email"},
+    )
+    update = _callback_update("tz:3")
+    show_availability = AsyncMock(
+        return_value=booking.BookingState.VIEWING_AVAILABILITY
+    )
+    monkeypatch.setattr(
+        booking,
+        "_show_availability",
+        show_availability,
+    )
+
+    result = await booking.select_timezone(update, context)
+
+    assert result == booking.BookingState.VIEWING_AVAILABILITY
+    assert context.user_data["timezone"] == "Asia/Yekaterinburg"
+    assert "selected_date" not in context.user_data
+    assert "selected_time" not in context.user_data
+    show_availability.assert_awaited_once_with(
+        update.callback_query,
+        context,
+        offset_days=0,
+    )
+
+
+@pytest.mark.asyncio
 async def test_already_remembered_status_does_not_write_profile():
     profile_service = MagicMock()
     context = _context(profile_service=profile_service)
