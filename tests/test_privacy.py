@@ -37,6 +37,7 @@ def _message_update(text="/privacy", user_id=12345):
     update.message = AsyncMock()
     update.message.text = text
     update.message.reply_text = AsyncMock()
+    update.effective_message = update.message
     update.callback_query = None
     return update
 
@@ -162,15 +163,18 @@ async def test_privacy_changes_name_timezone_and_email(profile_service):
     context = _context(profile_service, whitelisted=True)
 
     name_update = _message_update("New Name")
+    context.user_data["privacy_pending_input"] = "name"
     assert await handlers.privacy_enter_name(name_update, context) == handlers.PrivacyState.VIEWING
 
     timezone_update = _callback_update("privacy_tz:3")
+    context.user_data["privacy_pending_input"] = "timezone"
     assert (
         await handlers.privacy_select_timezone(timezone_update, context)
         == handlers.PrivacyState.VIEWING
     )
 
     email_update = _message_update("new@example.com")
+    context.user_data["privacy_pending_input"] = "email"
     assert (
         await handlers.privacy_enter_email(email_update, context) == handlers.PrivacyState.VIEWING
     )

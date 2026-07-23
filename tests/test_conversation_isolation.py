@@ -56,18 +56,20 @@ async def test_booking_name_wins_over_abandoned_privacy_name_input(
         is_bot=True,
         username="telecalbot_test_bot",
     )
-    monkeypatch.setattr(application.bot, "send_message", AsyncMock())
+    monkeypatch.setattr(application.bot.__class__, "send_message", AsyncMock())
 
     db = Database(temp_db_path)
     initialize_schema(db)
     profile_service = UserPreferenceService(db)
     whitelist_service = MagicMock()
     whitelist_service.is_whitelisted.return_value = True
+    duration_limit_service = MagicMock()
+    duration_limit_service.get_limit.return_value = None
     application.bot_data.update(
         {
             "user_preference_service": profile_service,
             "whitelist_service": whitelist_service,
-            "duration_limit_service": MagicMock(),
+            "duration_limit_service": duration_limit_service,
         }
     )
 

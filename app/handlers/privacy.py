@@ -1,6 +1,7 @@
 """Reversible management of explicitly remembered booking profile fields."""
 
 import logging
+from datetime import timedelta
 from enum import IntEnum, auto
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -10,9 +11,11 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
+from app.config import settings
 from app.constants import RUSSIAN_TIMEZONES
 from app.services.user_preferences import UserPreferenceService
 
@@ -23,6 +26,14 @@ TELEGRAM_ACCESS_NOTICE = (
     "Данные доступа Telegram управляются отдельно и в этом разделе не изменяются."
 )
 PROFILE_LOAD_FAILED = object()
+PENDING_PRIVACY_INPUT_KEY = "privacy_pending_input"
+PROFILE_WRITE_DENIED = (
+    "Сохранять новые данные могут только одобренные пользователи. "
+    "Ранее сохраненные данные по-прежнему можно просматривать и удалять через /privacy."
+)
+PROFILE_VALUE_WRITE_ACTIONS = frozenset(
+    {"edit_name", "edit_timezone", "edit_email", "private_email"}
+)
 
 
 class PrivacyState(IntEnum):
@@ -37,6 +48,7 @@ class PrivacyState(IntEnum):
 
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display remembered fields without requiring current whitelist access."""
+    _clear_pending_privacy_input(context)
     profile = _load_profile(context, update.effective_user.id)
     await update.message.reply_text(
         _privacy_summary(profile),
@@ -51,21 +63,31 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     action = query.data.split(":", 1)[1]
     user_id = query.from_user.id
-    service = _profile_service(context)
+
+    if action in PROFILE_VALUE_WRITE_ACTIONS and not _can_write_profile(context, user_id):
+        _clear_pending_privacy_input(context)
+        await query.edit_message_text(PROFILE_WRITE_DENIED)
+        return PrivacyState.VIEWING
 
     if action == "edit_name":
+        context.user_data[PENDING_PRIVACY_INPUT_KEY] = "name"
         await query.edit_message_text("Введите имя, которое нужно запомнить:")
         return PrivacyState.ENTERING_NAME
     if action == "edit_timezone":
+        context.user_data[PENDING_PRIVACY_INPUT_KEY] = "timezone"
         await query.edit_message_text(
             "Выберите часовой пояс, который нужно запомнить:",
             reply_markup=_privacy_timezone_keyboard(),
         )
         return PrivacyState.SELECTING_TIMEZONE
     if action == "edit_email":
+        context.user_data[PENDING_PRIVACY_INPUT_KEY] = "email"
         await query.edit_message_text("Введите email, который нужно запомнить:")
         return PrivacyState.ENTERING_EMAIL
+    if action == "back":
+        _clear_pending_privacy_input(context)
     if action == "delete_confirm":
+        _clear_pending_privacy_input(context)
         await query.edit_message_text(
             f"Удалить все сохраненные настройки профиля?\n\n{PROFILE_DELETE_NOTICE}",
             reply_markup=InlineKeyboardMarkup(
@@ -81,6 +103,8 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return PrivacyState.VIEWING
     if action == "delete_profile":
+        _clear_pending_privacy_input(context)
+        service = _profile_service(context)
         try:
             service.clear_profile(user_id)
         except Exception as error:
@@ -95,6 +119,7 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return PrivacyState.END
 
+    service = _profile_service(context)
     operations = {
         "forget_name": lambda: service.clear_preferred_name(user_id),
         "forget_timezone": lambda: service.clear_timezone(user_id),
@@ -122,6 +147,16 @@ async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def privacy_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Save a new preferred booking name."""
+    if not _pending_input_matches(context, "name"):
+        await update.message.reply_text(
+            "Редактирование сохраненного имени отменено. Используйте /privacy, чтобы начать снова."
+        )
+        return PrivacyState.END
+    if not _can_write_profile(context, update.effective_user.id):
+        _clear_pending_privacy_input(context)
+        await update.message.reply_text(PROFILE_WRITE_DENIED)
+        return PrivacyState.END
+
     name = update.message.text.strip()
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Попробуйте ещё раз:")
@@ -138,6 +173,7 @@ async def privacy_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Не удалось сохранить имя. Попробуйте позже или вернитесь командой /privacy."
         )
         return PrivacyState.ENTERING_NAME
+    _clear_pending_privacy_input(context)
     await _reply_with_profile(update, context)
     return PrivacyState.VIEWING
 
@@ -146,6 +182,16 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
     """Save a timezone selected through an opaque numeric callback."""
     query = update.callback_query
     await query.answer()
+    if not _pending_input_matches(context, "timezone"):
+        await query.edit_message_text(
+            "Редактирование часового пояса отменено. Используйте /privacy, чтобы начать снова."
+        )
+        return PrivacyState.END
+    if not _can_write_profile(context, query.from_user.id):
+        _clear_pending_privacy_input(context)
+        await query.edit_message_text(PROFILE_WRITE_DENIED)
+        return PrivacyState.END
+
     try:
         index = int(query.data.split(":", 1)[1])
         if index < 0:
@@ -160,6 +206,7 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
         _log_storage_failure("save_timezone", query.from_user.id, error)
         await query.edit_message_text("Не удалось сохранить часовой пояс. Попробуйте позже.")
         return PrivacyState.SELECTING_TIMEZONE
+    _clear_pending_privacy_input(context)
     profile = _load_profile(context, query.from_user.id)
     await query.edit_message_text(
         _privacy_summary(profile),
@@ -170,6 +217,16 @@ async def privacy_select_timezone(update: Update, context: ContextTypes.DEFAULT_
 
 async def privacy_enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Save a separately consented personal booking email."""
+    if not _pending_input_matches(context, "email"):
+        await update.message.reply_text(
+            "Редактирование сохраненного email отменено. Используйте /privacy, чтобы начать снова."
+        )
+        return PrivacyState.END
+    if not _can_write_profile(context, update.effective_user.id):
+        _clear_pending_privacy_input(context)
+        await update.message.reply_text(PROFILE_WRITE_DENIED)
+        return PrivacyState.END
+
     email = update.message.text.strip()
     if "@" not in email or "." not in email.split("@")[-1]:
         await update.message.reply_text("Некорректный email. Попробуйте ещё раз:")
@@ -183,8 +240,34 @@ async def privacy_enter_email(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Не удалось сохранить email. Попробуйте позже или вернитесь командой /privacy."
         )
         return PrivacyState.ENTERING_EMAIL
+    _clear_pending_privacy_input(context)
     await _reply_with_profile(update, context)
     return PrivacyState.VIEWING
+
+
+async def invalidate_pending_privacy_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Invalidate abandoned privacy input before another command is dispatched."""
+    _clear_pending_privacy_input(context)
+
+
+async def privacy_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel pending privacy editing without changing remembered data."""
+    _clear_pending_privacy_input(context)
+    await update.effective_message.reply_text("Редактирование сохраненных данных отменено.")
+    return PrivacyState.END
+
+
+async def privacy_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Expire abandoned privacy editing so later text cannot be persisted."""
+    _clear_pending_privacy_input(context)
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "Сессия управления сохраненными данными истекла. Используйте /privacy, чтобы начать снова."
+        )
+    return PrivacyState.END
 
 
 async def _reply_with_profile(update, context) -> None:
@@ -197,6 +280,30 @@ async def _reply_with_profile(update, context) -> None:
 
 def _profile_service(context) -> UserPreferenceService:
     return context.bot_data["user_preference_service"]
+
+
+def _clear_pending_privacy_input(context) -> None:
+    context.user_data.pop(PENDING_PRIVACY_INPUT_KEY, None)
+
+
+def _pending_input_matches(context, expected: str) -> bool:
+    return context.user_data.get(PENDING_PRIVACY_INPUT_KEY) == expected
+
+
+def _can_write_profile(context, user_id: int) -> bool:
+    whitelist_service = context.bot_data.get("whitelist_service")
+    if whitelist_service is None:
+        logger.warning("whitelist_service missing in bot_data; denying profile write")
+        return False
+    try:
+        return whitelist_service.is_whitelisted(user_id)
+    except Exception as error:
+        logger.error(
+            "Failed to check profile write access for user_id=%s error_type=%s",
+            user_id,
+            type(error).__name__,
+        )
+        return False
 
 
 def _load_profile(context, user_id: int):
@@ -311,7 +418,15 @@ def create_privacy_conversation_handler() -> ConversationHandler:
             PrivacyState.ENTERING_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, privacy_enter_email),
             ],
+            ConversationHandler.TIMEOUT: [TypeHandler(Update, privacy_timeout)],
         },
-        fallbacks=[CommandHandler("privacy", privacy_command)],
+        fallbacks=[
+            CommandHandler("privacy", privacy_command),
+            CommandHandler("cancel", privacy_cancel),
+            MessageHandler(filters.COMMAND, privacy_cancel),
+        ],
         allow_reentry=True,
+        conversation_timeout=timedelta(
+            seconds=settings.booking_conversation_timeout_seconds
+        ),
     )
