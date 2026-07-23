@@ -1206,6 +1206,7 @@ class TestConfirmBooking:
     @pytest.mark.asyncio
     async def test_rejected_personal_email_returns_to_email_entry(
         self,
+        mock_update,
         mock_update_with_query,
         mock_context,
         mock_calcom_client,
@@ -1214,6 +1215,8 @@ class TestConfirmBooking:
         mock_context.user_data = {
             "name": "Alice",
             "email": "rejected@example.com",
+            "email_mode": "saved",
+            "remembered_profile_fields": {"email"},
             "selected_date": "2026-01-06",
             "selected_time": "2026-01-06T10:00:00.000+03:00",
             "timezone": "Europe/Moscow",
@@ -1230,8 +1233,21 @@ class TestConfirmBooking:
 
         assert result == BookingState.ENTERING_EMAIL
         assert "email" not in mock_context.user_data
+        assert "email" not in mock_context.user_data["remembered_profile_fields"]
         message = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
         assert "не принимает этот email" in message
+
+        mock_update.message.text = "replacement@example.com"
+        result = await enter_email(mock_update, mock_context)
+
+        assert result == BookingState.REMEMBERING_PROFILE
+        keyboard = mock_update.message.reply_text.call_args.kwargs["reply_markup"]
+        callbacks = {
+            button.callback_data
+            for row in keyboard.inline_keyboard
+            for button in row
+        }
+        assert "remember:email" in callbacks
 
     @pytest.mark.asyncio
     async def test_handles_409_conflict(

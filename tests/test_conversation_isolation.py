@@ -1,20 +1,38 @@
-"""Application-level regressions for overlapping user conversations."""
+"""Application-level regressions for switching between user conversations."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telegram import Chat, Message, MessageEntity, Update, User
-from telegram.ext import MessageHandler, filters
+from telegram import (
+    CallbackQuery,
+    Chat,
+    Message,
+    MessageEntity,
+    Update,
+    User,
+)
+from telegram.ext import Application, MessageHandler, filters
 
-from app.handlers.booking import BookingState, create_booking_conversation_handler
-from app.handlers.privacy import PrivacyState, create_privacy_conversation_handler
+from app.database import Database
+from app.database.migrations import initialize_schema
+from app.handlers.booking import BookingState
+from app.handlers.privacy import (
+    PrivacyState,
+    invalidate_pending_privacy_input,
+)
 from app.services.user_preferences import UserPreferenceService
 
 
+def _user() -> User:
+    return User(id=12345, first_name="Test", is_bot=False)
+
+
+def _chat() -> Chat:
+    return Chat(id=12345, type=Chat.PRIVATE)
+
+
 def _message_update(application, update_id: int, text: str) -> Update:
-    user = User(id=12345, first_name="Test", is_bot=False)
-    chat = Chat(id=12345, type=Chat.PRIVATE)
     entities = None
     if text.startswith("/"):
         entities = [
@@ -27,8 +45,8 @@ def _message_update(application, update_id: int, text: str) -> Update:
     message = Message(
         message_id=update_id,
         date=datetime.now(timezone.utc),
-        chat=chat,
-        from_user=user,
+        chat=_chat(),
+        from_user=_user(),
         text=text,
         entities=entities,
     )
@@ -36,16 +54,30 @@ def _message_update(application, update_id: int, text: str) -> Update:
     return Update(update_id=update_id, message=message)
 
 
-@pytest.mark.asyncio
-async def test_booking_name_wins_over_abandoned_privacy_name_input(
-    monkeypatch,
-    temp_db_path,
-):
-    from telegram.ext import Application
+def _callback_update(application, update_id: int, data: str) -> Update:
+    message = Message(
+        message_id=update_id,
+        date=datetime.now(timezone.utc),
+        chat=_chat(),
+        from_user=application.bot._bot_user,
+        text="privacy",
+    )
+    message.set_bot(application.bot)
+    query = CallbackQuery(
+        id=f"callback-{update_id}",
+        from_user=_user(),
+        chat_instance="test-chat",
+        message=message,
+        data=data,
+    )
+    query.set_bot(application.bot)
+    return Update(update_id=update_id, callback_query=query)
 
-    from app.database import Database
-    from app.database.migrations import initialize_schema
-    from app.handlers.privacy import invalidate_pending_privacy_input
+
+def _application(monkeypatch, temp_db_path):
+    from app.handlers.user_conversation import (
+        create_user_conversation_handler,
+    )
 
     application = Application.builder().token("123456:test-token").build()
     application._initialized = True
@@ -57,6 +89,16 @@ async def test_booking_name_wins_over_abandoned_privacy_name_input(
         username="telecalbot_test_bot",
     )
     monkeypatch.setattr(application.bot.__class__, "send_message", AsyncMock())
+    monkeypatch.setattr(
+        application.bot.__class__,
+        "answer_callback_query",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        application.bot.__class__,
+        "edit_message_text",
+        AsyncMock(),
+    )
 
     db = Database(temp_db_path)
     initialize_schema(db)
@@ -73,22 +115,73 @@ async def test_booking_name_wins_over_abandoned_privacy_name_input(
         }
     )
 
-    booking = create_booking_conversation_handler()
-    privacy = create_privacy_conversation_handler()
+    conversation = create_user_conversation_handler()
     application.add_handler(
-        MessageHandler(filters.COMMAND, invalidate_pending_privacy_input),
+        MessageHandler(
+            filters.COMMAND,
+            invalidate_pending_privacy_input,
+        ),
         group=-1,
     )
-    application.add_handler(booking)
-    application.add_handler(privacy)
+    application.add_handler(conversation)
+    return application, conversation, profile_service
 
-    conversation_key = (12345, 12345)
-    privacy._conversations[conversation_key] = PrivacyState.ENTERING_NAME
-    application.user_data[12345]["privacy_pending_input"] = "name"
 
-    await application.process_update(_message_update(application, 1, "/book"))
-    booking._conversations[conversation_key] = BookingState.ENTERING_NAME
-    await application.process_update(_message_update(application, 2, "Booking Name"))
+@pytest.mark.asyncio
+async def test_book_replaces_abandoned_privacy_name_input(
+    monkeypatch,
+    temp_db_path,
+):
+    application, conversation, profile_service = _application(
+        monkeypatch,
+        temp_db_path,
+    )
+    key = (12345, 12345)
+
+    await application.process_update(
+        _message_update(application, 1, "/privacy")
+    )
+    await application.process_update(
+        _callback_update(application, 2, "privacy:edit_name")
+    )
+    assert conversation._conversations[key] == PrivacyState.ENTERING_NAME
+
+    await application.process_update(_message_update(application, 3, "/book"))
+    conversation._conversations[key] = BookingState.ENTERING_NAME
+    await application.process_update(
+        _message_update(application, 4, "Booking Name")
+    )
 
     assert application.user_data[12345]["name"] == "Booking Name"
     assert profile_service.get_profile(12345) is None
+
+
+@pytest.mark.asyncio
+async def test_privacy_replaces_booking_and_receives_its_name_input(
+    monkeypatch,
+    temp_db_path,
+):
+    application, conversation, profile_service = _application(
+        monkeypatch,
+        temp_db_path,
+    )
+    key = (12345, 12345)
+
+    await application.process_update(_message_update(application, 1, "/book"))
+    conversation._conversations[key] = BookingState.ENTERING_NAME
+    application.user_data[12345]["selected_date"] = "2026-01-06"
+
+    await application.process_update(
+        _message_update(application, 2, "/privacy")
+    )
+    await application.process_update(
+        _callback_update(application, 3, "privacy:edit_name")
+    )
+    await application.process_update(
+        _message_update(application, 4, "Privacy Name")
+    )
+
+    profile = profile_service.get_profile(12345)
+    assert profile is not None
+    assert profile.preferred_name == "Privacy Name"
+    assert "selected_date" not in application.user_data[12345]
