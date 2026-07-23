@@ -248,6 +248,54 @@ def test_migration_resets_legacy_automatically_saved_timezones(temp_db_path):
     }
 
 
+def test_profile_migration_preserves_unknown_schema_and_fails_closed(
+    temp_db_path,
+    caplog,
+):
+    db = Database(temp_db_path)
+    db.execute_write(
+        """
+        CREATE TABLE user_preferences (
+            telegram_id INTEGER PRIMARY KEY,
+            preferred_name TEXT,
+            timezone TEXT,
+            email_mode TEXT NOT NULL,
+            email TEXT,
+            updated_at TEXT NOT NULL,
+            future_consent_field TEXT
+        )
+        """
+    )
+    db.execute_write(
+        """
+        INSERT INTO user_preferences (
+            telegram_id, preferred_name, timezone, email_mode, email, updated_at,
+            future_consent_field
+        ) VALUES (?, ?, ?, 'saved', ?, ?, ?)
+        """,
+        (
+            123,
+            "Alice",
+            "Europe/Moscow",
+            "alice@example.com",
+            "2026-07-23T00:00:00+00:00",
+            "keep-me",
+        ),
+    )
+    caplog.set_level("ERROR")
+
+    with pytest.raises(RuntimeError, match="Unexpected user_preferences schema"):
+        run_migrations(db)
+
+    row = db.execute_one(
+        "SELECT * FROM user_preferences WHERE telegram_id = ?",
+        (123,),
+    )
+    assert row is not None
+    assert row["future_consent_field"] == "keep-me"
+    assert "Unexpected user_preferences schema" in caplog.text
+
+
 def test_user_profile_migration_is_idempotent_and_preserves_explicit_profile(
     temp_db_path,
 ):

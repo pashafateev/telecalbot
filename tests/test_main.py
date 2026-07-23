@@ -47,6 +47,27 @@ class TestErrorHandler:
         assert private_values not in caplog.text
         assert "alice@example.com" not in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_unhandled_exception_log_includes_safe_traceback_frames(self, caplog):
+        caplog.set_level("ERROR")
+        private_values = "Alice Europe/Moscow alice@example.com"
+        context = MagicMock()
+
+        def raise_private_error():
+            raise RuntimeError(private_values)
+
+        try:
+            raise_private_error()
+        except RuntimeError as error:
+            context.error = error
+
+        await error_handler({"message": private_values}, context)
+
+        assert "raise_private_error" in caplog.text
+        assert "test_main.py" in caplog.text
+        assert private_values not in caplog.text
+        assert "alice@example.com" not in caplog.text
+
 
 class TestMain:
     """Tests for main application wiring."""

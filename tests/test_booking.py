@@ -827,6 +827,28 @@ class TestEnterEmail:
         assert "email" not in mock_context.user_data
 
     @pytest.mark.asyncio
+    async def test_rejects_email_longer_than_254_characters(
+        self,
+        mock_update,
+        mock_context,
+    ):
+        mock_update.message.text = (
+            f"{'a' * (255 - len('@example.com'))}@example.com"
+        )
+        mock_context.user_data = {
+            "name": "Alice",
+            "selected_date": "2026-01-06",
+            "selected_time": "2026-01-06T10:00:00.000+03:00",
+            "timezone": "Europe/Moscow",
+        }
+
+        result = await enter_email(mock_update, mock_context)
+
+        assert result == BookingState.ENTERING_EMAIL
+        assert "email" not in mock_context.user_data
+        assert "254" in mock_update.message.reply_text.call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_rejects_invalid_email_no_dot_in_domain(self, mock_update, mock_context):
         mock_update.message.text = "user@localhost"
         mock_context.user_data = {

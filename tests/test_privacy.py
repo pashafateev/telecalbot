@@ -4,6 +4,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.error import BadRequest
 from telegram.ext import CommandHandler, ConversationHandler
 
 from app import handlers
@@ -312,3 +313,56 @@ async def test_privacy_delete_failure_does_not_claim_profile_was_deleted(caplog)
     assert "профиль удален" not in response.lower()
     assert private_values not in caplog.text
     assert "alice@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_privacy_ignores_unchanged_message_edit(profile_service):
+    profile_service.save_private_email_mode(12345)
+    context = _context(profile_service, whitelisted=True)
+    update = _callback_update("privacy:private_email")
+    update.callback_query.edit_message_text.side_effect = BadRequest(
+        "Message is not modified: specified new message content and reply markup "
+        "are exactly the same as a current content and reply markup of the message"
+    )
+
+    result = await handlers.privacy_callback(update, context)
+
+    assert result == handlers.PrivacyState.VIEWING
+
+
+@pytest.mark.asyncio
+async def test_privacy_does_not_hide_other_message_edit_errors(profile_service):
+    profile_service.save_private_email_mode(12345)
+    context = _context(profile_service, whitelisted=True)
+    update = _callback_update("privacy:private_email")
+    update.callback_query.edit_message_text.side_effect = BadRequest("Chat not found")
+
+    with pytest.raises(BadRequest, match="Chat not found"):
+        await handlers.privacy_callback(update, context)
+
+
+@pytest.mark.asyncio
+async def test_privacy_callback_handles_missing_profile_service():
+    context = _context(MagicMock())
+    context.bot_data.pop("user_preference_service")
+    update = _callback_update("privacy:back")
+
+    result = await handlers.privacy_callback(update, context)
+
+    assert result == handlers.PrivacyState.VIEWING
+    response = update.callback_query.edit_message_text.call_args.args[0]
+    assert "не удалось загрузить" in response.lower()
+
+
+@pytest.mark.asyncio
+async def test_privacy_rejects_email_longer_than_254_characters(profile_service):
+    context = _context(profile_service, whitelisted=True)
+    context.user_data["privacy_pending_input"] = "email"
+    email = f"{'a' * (255 - len('@example.com'))}@example.com"
+    update = _message_update(email)
+
+    result = await handlers.privacy_enter_email(update, context)
+
+    assert result == handlers.PrivacyState.ENTERING_EMAIL
+    assert profile_service.get_profile(12345) is None
+    assert "254" in update.message.reply_text.call_args.args[0]
