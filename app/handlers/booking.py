@@ -100,6 +100,7 @@ BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
         "email",
         "email_mode",
         "remember_choices",
+        "remembered_profile_fields",
         "edit_field",
         "internal_ref",
     }
@@ -387,18 +388,24 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 type(error).__name__,
             )
         else:
+            remembered_fields = set()
             if profile is not None:
                 if profile.preferred_name:
                     context.user_data["name"] = profile.preferred_name
+                    remembered_fields.add("name")
                 context.user_data["email_mode"] = profile.email_mode
                 if profile.email_mode == "saved" and profile.email:
                     context.user_data["email"] = profile.email
+                    remembered_fields.add("email")
                 elif profile.email_mode == "private":
                     context.user_data["email"] = None
+                    remembered_fields.add("private")
 
             if profile is not None and profile.timezone in SUPPORTED_TIMEZONE_IDS:
                 context.user_data["timezone"] = profile.timezone
                 context.user_data["offset_days"] = 0
+                remembered_fields.add("timezone")
+                context.user_data["remembered_profile_fields"] = remembered_fields
                 target = _MessageReplyTarget(
                     update.message,
                     update.effective_user.id,
@@ -410,6 +417,8 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     "Ignoring unsupported timezone in booking profile for user_id=%s",
                     update.effective_user.id,
                 )
+            if remembered_fields:
+                context.user_data["remembered_profile_fields"] = remembered_fields
 
     keyboard = build_timezone_keyboard()
     prefix = _profile_reuse_message(context.user_data)
@@ -853,6 +862,7 @@ def _remembering_text(data: dict, *, reused: bool = False) -> str:
     prefix = f"{reuse_message}\n\n" if reuse_message else ""
     return (
         f"{prefix}Какие данные запомнить для следующих записей?\n\n"
+        "Уже сохраненные поля отмечены отдельно. "
         "Сохранится только то, что вы явно выберете. "
         "Можно продолжить, ничего не сохраняя."
     )
@@ -860,9 +870,20 @@ def _remembering_text(data: dict, *, reused: bool = False) -> str:
 
 def _remembering_keyboard(data: dict) -> InlineKeyboardMarkup:
     choices = set(data.get("remember_choices", set()))
+    remembered = set(data.get("remembered_profile_fields", set()))
     buttons = []
 
     def option(label: str, field: str) -> None:
+        if field in remembered:
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"✓ {label} — уже сохранено",
+                        callback_data="remember:kept",
+                    )
+                ]
+            )
+            return
         marker = "✓ " if field in choices else ""
         buttons.append(
             [InlineKeyboardButton(f"{marker}{label}", callback_data=f"remember:{field}")]
@@ -876,6 +897,7 @@ def _remembering_keyboard(data: dict) -> InlineKeyboardMarkup:
         option("Предпочитать запись без личного email", "private")
     buttons.append([InlineKeyboardButton("Сохранить выбранное", callback_data="remember:save")])
     buttons.append([InlineKeyboardButton("Ничего не сохранять", callback_data="remember:none")])
+    buttons.append([InlineKeyboardButton("Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -885,6 +907,10 @@ async def remember_profile_choice(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     _refresh_booking_timeout_reminder(context, query.from_user.id)
     action = query.data.split(":", 1)[1]
+    remembered = set(context.user_data.get("remembered_profile_fields", set()))
+
+    if action == "kept":
+        return BookingState.REMEMBERING_PROFILE
 
     if action == "none":
         context.user_data.pop("remember_choices", None)
@@ -894,13 +920,14 @@ async def remember_profile_choice(update: Update, context: ContextTypes.DEFAULT_
         notice = _persist_profile_choices(
             context,
             query.from_user.id,
-            set(context.user_data.get("remember_choices", set())),
+            set(context.user_data.get("remember_choices", set())) - remembered,
         )
         context.user_data.pop("remember_choices", None)
         return await _show_confirmation_edit(query, context, notice=notice)
 
     available = {"name", "timezone"}
     available.add("email" if context.user_data.get("email") else "private")
+    available -= remembered
     if action not in available:
         return BookingState.REMEMBERING_PROFILE
 
@@ -1051,10 +1078,12 @@ async def edit_booking_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if field == "back":
         return await _show_confirmation_edit(query, context)
     if field == "name":
+        _mark_profile_field_transient(context.user_data, "name")
         context.user_data["edit_field"] = "name"
         await _safe_edit_message_text(query, "Введите имя для этой записи:")
         return BookingState.ENTERING_NAME
     if field == "timezone":
+        _mark_profile_field_transient(context.user_data, "timezone")
         context.user_data["edit_field"] = "timezone"
         await _safe_edit_message_text(
             query,
@@ -1063,14 +1092,25 @@ async def edit_booking_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return BookingState.SELECTING_TIMEZONE
     if field == "email":
+        _mark_profile_field_transient(context.user_data, "email")
         context.user_data["edit_field"] = "email"
         await _safe_edit_message_text(query, "Введите email для этой записи:")
         return BookingState.ENTERING_EMAIL
     if field == "private":
+        _mark_profile_field_transient(context.user_data, "private")
         context.user_data["email"] = None
         context.user_data["email_mode"] = "private"
         return await _show_remembering_edit(query, context)
     return BookingState.CONFIRMING
+
+
+def _mark_profile_field_transient(data: dict, field: str) -> None:
+    remembered = set(data.get("remembered_profile_fields", set()))
+    if field in {"email", "private"}:
+        remembered.difference_update({"email", "private"})
+    else:
+        remembered.discard(field)
+    data["remembered_profile_fields"] = remembered
 
 
 # ---------------------------------------------------------------------------
