@@ -1227,6 +1227,7 @@ async def confirm_booking(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if not personal_email:
                 return await _show_privacy_email_unavailable(query)
 
+            _mark_profile_field_transient(data, "email")
             data.pop("email", None)
             await _safe_edit_message_text(
                 query,

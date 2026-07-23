@@ -19,12 +19,14 @@ from app.handlers.privacy import (
     privacy_timeout,
 )
 from app.handlers.start import start_command, text_onboarding_or_help
+from app.handlers.user_conversation import create_user_conversation_handler
 
 __all__ = [
     "approve_command",
     "create_booking_conversation_handler",
     "create_cancel_booking_flow_handlers",
     "help_command",
+    "create_user_conversation_handler",
     "PrivacyState",
     "create_privacy_conversation_handler",
     "invalidate_pending_privacy_input",

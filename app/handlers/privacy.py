@@ -40,7 +40,7 @@ PROFILE_VALUE_WRITE_ACTIONS = frozenset(
 class PrivacyState(IntEnum):
     """States for the /privacy profile-management conversation."""
 
-    VIEWING = auto()
+    VIEWING = 101
     ENTERING_NAME = auto()
     SELECTING_TIMEZONE = auto()
     ENTERING_EMAIL = auto()

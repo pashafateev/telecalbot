@@ -18,9 +18,8 @@ from app.config import settings
 from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
-    create_booking_conversation_handler,
     create_cancel_booking_flow_handlers,
-    create_privacy_conversation_handler,
+    create_user_conversation_handler,
     help_command,
     invalidate_pending_privacy_input,
     pending_command,
@@ -84,6 +83,7 @@ def create_application() -> Application:
         MessageHandler(filters.COMMAND, invalidate_pending_privacy_input),
         group=-1,
     )
+    application.add_handler(create_user_conversation_handler())
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
@@ -92,8 +92,6 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("setlimit", setlimit_command))
     application.add_handler(CommandHandler("removelimit", removelimit_command))
     application.add_handler(CommandHandler("limits", limits_command))
-    application.add_handler(create_booking_conversation_handler())
-    application.add_handler(create_privacy_conversation_handler())
     for handler in create_cancel_booking_flow_handlers():
         application.add_handler(handler)
     application.add_handler(
