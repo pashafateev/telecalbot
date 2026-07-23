@@ -145,7 +145,76 @@ async def test_private_email_choice_opens_granular_remembering_screen():
         "remember:private",
         "remember:save",
         "remember:none",
+        "cancel",
     }
+
+
+@pytest.mark.asyncio
+async def test_saved_profile_fields_are_shown_as_already_remembered(
+    temp_db_path,
+):
+    db = Database(temp_db_path)
+    initialize_schema(db)
+    profile_service = UserPreferenceService(db)
+    profile_service.save_preferred_name(12345, "Alice")
+    profile_service.save_timezone(12345, "Europe/Moscow")
+    profile_service.save_email(12345, "alice@example.com")
+    context = _context(profile_service=profile_service)
+
+    await booking.book_command(_message_update(), context)
+    update = _callback_update(
+        "slot:2026-01-06:2026-01-06T10:00:00.000+03:00"
+    )
+    result = await booking.select_slot(update, context)
+
+    assert result == booking.BookingState.REMEMBERING_PROFILE
+    keyboard = update.callback_query.edit_message_text.call_args.kwargs[
+        "reply_markup"
+    ]
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    remembered_buttons = [
+        button for button in buttons if "уже сохранено" in button.text.lower()
+    ]
+    assert len(remembered_buttons) == 3
+    assert all(button.text.startswith("✓ ") for button in remembered_buttons)
+    assert all(button.callback_data == "remember:kept" for button in remembered_buttons)
+    assert not {
+        "remember:name",
+        "remember:timezone",
+        "remember:email",
+    } & {button.callback_data for button in buttons}
+
+
+@pytest.mark.asyncio
+async def test_editing_saved_field_makes_new_value_selectable_for_consent():
+    context = _context()
+    context.user_data = _ready_booking_data(
+        remembered_profile_fields={"name", "timezone", "email"}
+    )
+    update = _callback_update("edit:name")
+
+    result = await booking.edit_booking_field(update, context)
+
+    assert result == booking.BookingState.ENTERING_NAME
+    assert context.user_data["remembered_profile_fields"] == {
+        "timezone",
+        "email",
+    }
+
+
+@pytest.mark.asyncio
+async def test_already_remembered_status_does_not_write_profile():
+    profile_service = MagicMock()
+    context = _context(profile_service=profile_service)
+    context.user_data = _ready_booking_data(
+        remembered_profile_fields={"name", "timezone", "email"}
+    )
+    update = _callback_update("remember:kept")
+
+    result = await booking.remember_profile_choice(update, context)
+
+    assert result == booking.BookingState.REMEMBERING_PROFILE
+    assert profile_service.mock_calls == []
 
 
 @pytest.mark.asyncio
