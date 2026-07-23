@@ -1065,6 +1065,34 @@ class TestConfirmBooking:
         assert result == ConversationHandler.END
 
     @pytest.mark.asyncio
+    async def test_success_clears_booking_scoped_data_but_keeps_unrelated_state(
+        self,
+        mock_update_with_query,
+        mock_context,
+        mock_calcom_client,
+        user_data_ready,
+        booking_response,
+    ):
+        mock_update_with_query.callback_query.data = "confirm"
+        mock_context.user_data = {
+            **user_data_ready,
+            "remembered_profile_fields": {"name", "timezone", "email"},
+            "active_user_conversation": "booking",
+            "unrelated": "keep",
+        }
+        mock_calcom_client.create_booking.return_value = booking_response
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.resolve_event_type.side_effect = _resolved_event_type
+            result = await confirm_booking(
+                mock_update_with_query,
+                mock_context,
+            )
+
+        assert result == ConversationHandler.END
+        assert mock_context.user_data == {"unrelated": "keep"}
+
+    @pytest.mark.asyncio
     async def test_shows_success_confirmation(
         self,
         mock_update_with_query,
