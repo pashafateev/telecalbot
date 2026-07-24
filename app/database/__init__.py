@@ -2,7 +2,12 @@
 
 from app.database.connection import Database, db
 from app.database.migrations import run_migrations
-from app.database.models import AccessRequest, UserPreference, WhitelistEntry
+from app.database.models import (
+    AccessRequest,
+    UserPreference,
+    UserProfile,
+    WhitelistEntry,
+)
 
 __all__ = [
     "Database",
@@ -11,4 +16,5 @@ __all__ = [
     "WhitelistEntry",
     "AccessRequest",
     "UserPreference",
+    "UserProfile",
 ]

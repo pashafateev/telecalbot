@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import traceback
 
 from telegram import BotCommand
 from telegram.error import NetworkError
@@ -17,9 +18,10 @@ from app.config import settings
 from app.database import db, run_migrations
 from app.handlers import (
     approve_command,
-    create_booking_conversation_handler,
     create_cancel_booking_flow_handlers,
+    create_user_conversation_handler,
     help_command,
+    invalidate_pending_privacy_input,
     pending_command,
     reject_command,
     start_command,
@@ -55,10 +57,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     error = context.error
 
     if isinstance(error, NetworkError):
-        logger.warning("Transient Telegram network error: %s", error)
+        logger.warning("Transient Telegram network error type=%s", type(error).__name__)
         return
 
-    logger.error("Unhandled exception while processing update %r", update, exc_info=error)
+    logger.error(
+        "Unhandled exception while processing update error_type=%s traceback_frames=\n%s",
+        type(error).__name__,
+        "".join(traceback.format_tb(error.__traceback__)).rstrip(),
+    )
 
 
 def create_application() -> Application:
@@ -73,6 +79,11 @@ def create_application() -> Application:
     application.bot_data["calcom_client"] = CalComClient(api_key=settings.calcom_api_key)
 
     # Register handlers
+    application.add_handler(
+        MessageHandler(filters.COMMAND, invalidate_pending_privacy_input),
+        group=-1,
+    )
+    application.add_handler(create_user_conversation_handler())
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
@@ -81,7 +92,6 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("setlimit", setlimit_command))
     application.add_handler(CommandHandler("removelimit", removelimit_command))
     application.add_handler(CommandHandler("limits", limits_command))
-    application.add_handler(create_booking_conversation_handler())
     for handler in create_cancel_booking_flow_handlers():
         application.add_handler(handler)
     application.add_handler(
@@ -99,6 +109,7 @@ def create_application() -> Application:
                 BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
                 BotCommand("cancel_booking", "Отменить запись"),
+                BotCommand("privacy", "Управлять сохраненными данными"),
                 BotCommand("help", "Показать список команд"),
             ]
         )
@@ -109,6 +120,7 @@ def create_application() -> Application:
                 BotCommand("start", "Начать работу с ботом"),
                 BotCommand("book", "Записаться на встречу"),
                 BotCommand("cancel_booking", "Отменить запись"),
+                BotCommand("privacy", "Управлять сохраненными данными"),
                 BotCommand("help", "Показать список команд"),
                 BotCommand("pending", "Список ожидающих запросов"),
                 BotCommand("setlimit", "Установить лимит длительности"),

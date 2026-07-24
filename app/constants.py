@@ -1,6 +1,8 @@
 """Constants used throughout the application."""
 
 SUPPORTED_BOOKING_DURATIONS = (30, 60, 120)
+MAX_NAME_LENGTH = 100
+MAX_EMAIL_LENGTH = 254
 
 # Russian timezones sorted by UTC offset
 RUSSIAN_TIMEZONES = [
@@ -16,6 +18,10 @@ RUSSIAN_TIMEZONES = [
     ("Asia/Magadan", "Магадан (UTC+11)"),
     ("Asia/Kamchatka", "Камчатка (UTC+12)"),
 ]
+
+SUPPORTED_TIMEZONE_IDS = frozenset(
+    timezone_id for timezone_id, _ in RUSSIAN_TIMEZONES
+)
 
 # Default timezone
 DEFAULT_TIMEZONE = "Europe/Moscow"

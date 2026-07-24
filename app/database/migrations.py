@@ -6,7 +6,37 @@ from app.database.connection import Database
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = """
+USER_PREFERENCES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS user_preferences (
+    telegram_id INTEGER PRIMARY KEY,
+    preferred_name TEXT,
+    timezone TEXT,
+    email_mode TEXT NOT NULL DEFAULT 'ask'
+        CHECK (email_mode IN ('ask', 'private', 'saved')),
+    email TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK (
+        (email_mode = 'saved' AND email IS NOT NULL AND trim(email) <> '')
+        OR (email_mode IN ('ask', 'private') AND email IS NULL)
+    )
+);
+"""
+
+USER_PREFERENCES_COLUMNS = {
+    "telegram_id",
+    "preferred_name",
+    "timezone",
+    "email_mode",
+    "email",
+    "updated_at",
+}
+LEGACY_USER_PREFERENCES_COLUMNS = {
+    "telegram_id",
+    "timezone",
+    "updated_at",
+}
+
+SCHEMA = f"""
 -- Whitelist of approved users
 CREATE TABLE IF NOT EXISTS whitelist (
     telegram_id INTEGER PRIMARY KEY,
@@ -25,12 +55,8 @@ CREATE TABLE IF NOT EXISTS access_requests (
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected'))
 );
 
--- User preferences (timezone, etc.)
-CREATE TABLE IF NOT EXISTS user_preferences (
-    telegram_id INTEGER PRIMARY KEY,
-    timezone TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
+-- Explicitly consented booking profile preferences
+{USER_PREFERENCES_SCHEMA}
 
 -- Duration limits per user (admin-managed)
 CREATE TABLE IF NOT EXISTS duration_limits (
@@ -71,9 +97,32 @@ def initialize_schema(db: Database) -> None:
 def run_migrations(db: Database) -> None:
     """Run any pending database migrations."""
     initialize_schema(db)
+    _migrate_user_preferences_profile(db)
     _migrate_bookings_time_columns(db)
     _ensure_bookings_internal_ref(db)
     _ensure_bookings_indexes(db)
+
+
+def _migrate_user_preferences_profile(db: Database) -> None:
+    """Replace the legacy auto-saved timezone table with consented profile fields."""
+    table_info = db.execute("PRAGMA table_info(user_preferences)")
+    columns = {row["name"] for row in table_info}
+    if columns == USER_PREFERENCES_COLUMNS:
+        return
+    if columns != LEGACY_USER_PREFERENCES_COLUMNS:
+        message = (
+            "Unexpected user_preferences schema; refusing to replace existing data"
+        )
+        logger.error("%s columns=%s", message, ",".join(sorted(columns)))
+        raise RuntimeError(message)
+
+    logger.info(
+        "Resetting legacy user preferences while migrating to explicit profile consent"
+    )
+    with db.get_connection() as conn:
+        conn.execute("ALTER TABLE user_preferences RENAME TO user_preferences_legacy")
+        conn.execute(USER_PREFERENCES_SCHEMA)
+        conn.execute("DROP TABLE user_preferences_legacy")
 
 
 def _migrate_bookings_time_columns(db: Database) -> None:

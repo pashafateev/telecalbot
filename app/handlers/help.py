@@ -19,7 +19,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not whitelist_service.is_whitelisted(user_id):
         await update.message.reply_text(
             "Доступные команды:\n\n"
-            "/start — Запросить доступ к боту"
+            "/start — Запросить доступ к боту\n"
+            "/privacy — Управлять сохраненными данными"
         )
         return
 
@@ -27,6 +28,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Доступные команды:\n",
         "/book — Записаться на встречу",
         "/cancel_booking — Отменить существующую запись",
+        "/privacy — Управлять сохраненными данными",
         "/help — Показать список команд",
     ]
 

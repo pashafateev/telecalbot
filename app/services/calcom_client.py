@@ -171,10 +171,10 @@ class CalComClient:
         if cache_key in self._availability_cache:
             cached_at, data = self._availability_cache[cache_key]
             if time.time() - cached_at < self.cache_ttl:
-                logger.debug("Cache hit for availability: %s", cache_key)
+                logger.debug("Cache hit for availability")
                 return data
 
-        logger.debug("Cache miss for availability: %s", cache_key)
+        logger.debug("Cache miss for availability")
 
         # Fetch from API
         params = {
@@ -270,10 +270,9 @@ class CalComClient:
                 message = e.response.text
                 error_code = _extract_error_code(e.response)
                 logger.error(
-                    "Cal.com API error %d code=%s: %s",
+                    "Cal.com API error %d code=%s",
                     status_code,
                     error_code,
-                    message,
                 )
 
                 last_error = CalComAPIError(
@@ -285,7 +284,7 @@ class CalComClient:
                 sleep_seconds = self._retry_delay_seconds(e.response, delay_seconds)
             except httpx.RequestError as e:
                 message = str(e)
-                logger.error("Cal.com API network error: %s", message)
+                logger.error("Cal.com API network error type=%s", type(e).__name__)
 
                 last_error = CalComAPIError(status_code=0, message=message)
                 should_retry = True

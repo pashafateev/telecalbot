@@ -14,6 +14,7 @@ Cal.com is blocked in some regions (like Russia), preventing users from accessin
 
 - **Button-Driven Interface**: No command memorization required
 - **Timezone Support**: Displays available times in user's timezone (with special support for Russian timezones)
+- **Consent-Based Booking Profile**: Remembers name, timezone, or email behavior only after an explicit per-field opt-in
 - **Access Control**: Whitelist-based system to manage approved users
 - **Google Calendar Sync**: Bookings automatically sync through Cal.com's integration
 - **Request-Based Approval**: Admin receives notifications when new users request access
@@ -79,6 +80,19 @@ Delivery mode:
 - `TELEGRAM_WEBHOOK_SECRET_TOKEN` is required in webhook mode and rejects forged update payloads.
 
 See `.env.sample` for a complete list of configuration options.
+
+## Remembered Booking Data
+
+By default, the bot asks for booking details again and keeps them only for the current booking. Before confirmation, users can explicitly choose which fields to remember for future bookings:
+
+- preferred booking name;
+- timezone;
+- personal email, with separate consent;
+- preference to book without a personal email.
+
+The `/privacy` command displays remembered values (with email masked), changes or forgets individual fields, and deletes the complete remembered profile. It remains available after whitelist access is removed. Deleting the profile does not cancel active bookings or change Telegram access records.
+
+The profile migration intentionally clears timezones saved automatically by older versions. Existing users are asked again and can opt in under the new consent flow.
 
 ## Deployment
 
