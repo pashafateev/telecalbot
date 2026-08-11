@@ -93,3 +93,75 @@ jobs:
         run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify public ingress
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! ingress_json="$(flyctl ips list --app telecalbot --json)"; then
+            echo "::error::Unable to inspect public ingress for telecalbot. Verify Fly authentication and app access, then rerun the deployment."
+            exit 1
+          fi
+
+          if ! jq -e '[.[] | select(.Type == "shared_v4" or .Type == "v4" or .Type == "v6")] | length > 0' <<<"$ingress_json" >/dev/null; then
+            echo "::error::No public ingress is allocated to telecalbot. Allocate a shared IPv4 or public IPv6 manually, wait for telecalbot.fly.dev DNS to resolve, then rerun the deployment."
+            exit 1
+          fi
+
+      - name: Verify webhook readiness
+        timeout-minutes: 7
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          readonly readiness_url="https://telecalbot.fly.dev/readyz"
+          readonly max_attempts=18
+          readonly retry_seconds=10
+          response_file="$(mktemp)"
+          error_file="$(mktemp)"
+          trap 'rm -f "$response_file" "$error_file"' EXIT
+          last_result="no response"
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            : >"$response_file"
+            : >"$error_file"
+            http_code=""
+
+            if http_code="$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --connect-timeout 5 \
+              --max-time 10 \
+              "$readiness_url" 2>"$error_file")"; then
+              if [[ "$http_code" == "200" ]] && jq -e '.status == "ready"' "$response_file" >/dev/null 2>&1; then
+                echo "Webhook service is ready (attempt ${attempt}/${max_attempts})."
+                exit 0
+              fi
+
+              if [[ "$http_code" == "200" ]]; then
+                last_result="HTTP 200 with an unexpected readiness payload"
+              else
+                last_result="HTTP ${http_code}"
+              fi
+            else
+              last_result="$(tr '\n' ' ' <"$error_file" | cut -c1-300)"
+              if [[ -z "$last_result" ]]; then
+                last_result="request failed without an HTTP response"
+              fi
+            fi
+
+            echo "Readiness attempt ${attempt}/${max_attempts} failed: ${last_result}."
+            if (( attempt < max_attempts )); then
+              sleep "$retry_seconds"
+            fi
+          done
+
+          echo "::group::Fly deployment diagnostics"
+          flyctl status --app telecalbot || true
+          flyctl checks list --app telecalbot || true
+          echo "::endgroup::"
+          echo "::error::telecalbot did not become ready after ${max_attempts} attempts. Last result: ${last_result}. Confirm telecalbot.fly.dev DNS, Fly machine startup and health checks, and the /readyz response before rerunning the deployment."
+          exit 1
