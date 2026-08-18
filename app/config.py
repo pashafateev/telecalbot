@@ -41,6 +41,13 @@ class Settings(BaseSettings):
 
     # Application Settings
     log_level: str = "INFO"
+    # Durable log file on the mounted volume. Fly keeps only a short live tail,
+    # so without this the bot has no record of an incident once it scrolls away.
+    # The volume also holds the SQLite database, hence the hard total size cap of
+    # log_file_max_bytes * (log_file_backup_count + 1).
+    log_file_path: str | None = None
+    log_file_max_bytes: int = 5_000_000
+    log_file_backup_count: int = 9
     booking_conversation_timeout_seconds: int = 900
     booking_conversation_reminder_seconds_before_timeout: int = 120
 
