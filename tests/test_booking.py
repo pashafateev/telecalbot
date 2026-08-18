@@ -1,5 +1,6 @@
 """Tests for the booking conversation handler."""
 
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,9 +12,15 @@ from app.config import ResolvedEventType
 from app.constants import RUSSIAN_TIMEZONES
 from app.database.models import UserPreference
 from app.handlers.booking import (
+    ACTIVE_USER_CONVERSATION_KEY,
+    BOOKING_CONVERSATION_NAME,
+    BOOKING_LAST_ACTIVITY_KEY,
+    BOOKING_SESSION_ID_KEY,
+    BOOKING_TIMEOUT_REMINDER_TEXT,
     BookingState,
     _booking_reference,
     _format_duration,
+    _send_booking_timeout_reminder,
     book_command,
     booking_timeout,
     build_availability_keyboard,
@@ -1495,8 +1502,14 @@ class TestBookingTimeoutReminderLifecycle:
 
         call_kwargs = mock_context.job_queue.run_once.call_args.kwargs
         assert call_kwargs["when"] == 780
-        assert call_kwargs["data"] == {"user_id": 12345}
         assert call_kwargs["name"] == "booking_timeout_reminder:12345"
+        # user_id gives the callback access to user_data, session_id lets it tell
+        # whether it still speaks for the attempt the user is in.
+        assert call_kwargs["user_id"] == 12345
+        assert call_kwargs["data"] == {
+            "user_id": 12345,
+            "session_id": mock_context.user_data[BOOKING_SESSION_ID_KEY],
+        }
 
     @pytest.mark.asyncio
     async def test_book_command_restart_clears_stale_state_and_replaces_reminder(
@@ -1524,6 +1537,8 @@ class TestBookingTimeoutReminderLifecycle:
             result = await book_command(mock_update, mock_context)
 
         assert result == BookingState.SELECTING_TIMEZONE
+        assert mock_context.user_data.pop(BOOKING_SESSION_ID_KEY)
+        assert mock_context.user_data.pop(BOOKING_LAST_ACTIVITY_KEY)
         assert mock_context.user_data == {"unrelated": "keep"}
         previous_reminder_job.schedule_removal.assert_called_once()
         mock_context.job_queue.run_once.assert_called_once()
@@ -1551,8 +1566,11 @@ class TestBookingTimeoutReminderLifecycle:
 
         call_kwargs = mock_context.job_queue.run_once.call_args.kwargs
         assert call_kwargs["when"] == 780
-        assert call_kwargs["data"] == {"user_id": 12345}
         assert call_kwargs["name"] == "booking_timeout_reminder:12345"
+        assert call_kwargs["data"] == {
+            "user_id": 12345,
+            "session_id": mock_context.user_data[BOOKING_SESSION_ID_KEY],
+        }
 
     @pytest.mark.asyncio
     async def test_confirm_booking_success_cancels_timeout_reminder(
@@ -1590,6 +1608,118 @@ class TestBookingTimeoutReminderLifecycle:
         assert result == ConversationHandler.END
         mock_context.job_queue.run_once.assert_called_once()
         reminder_job.schedule_removal.assert_called_once()
+
+
+class TestBookingSessionIdentity:
+    """Timers must belong to one booking attempt, not to the user in general."""
+
+    @pytest.fixture(autouse=True)
+    def _whitelisted(self, mock_context):
+        whitelist_service = MagicMock()
+        whitelist_service.is_whitelisted.return_value = True
+        mock_context.bot_data["whitelist_service"] = whitelist_service
+
+    @staticmethod
+    def _reminder_context(session_id, user_data):
+        context = MagicMock()
+        context.bot = AsyncMock()
+        context.job = MagicMock()
+        context.job.data = {"user_id": 12345, "session_id": session_id}
+        context.user_data = user_data
+        return context
+
+    @pytest.mark.asyncio
+    async def test_restarting_booking_starts_a_new_session(self, mock_update, mock_context):
+        mock_context.job_queue = MagicMock()
+        mock_context.job_queue.get_jobs_by_name.return_value = []
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.booking_conversation_reminder_seconds_before_timeout = 120
+
+            await book_command(mock_update, mock_context)
+            first_session = mock_context.user_data[BOOKING_SESSION_ID_KEY]
+            await book_command(mock_update, mock_context)
+            second_session = mock_context.user_data[BOOKING_SESSION_ID_KEY]
+
+        assert first_session != second_session
+
+    @pytest.mark.asyncio
+    async def test_reminder_is_sent_for_the_session_that_armed_it(self):
+        context = self._reminder_context(
+            "bses_current",
+            {
+                BOOKING_SESSION_ID_KEY: "bses_current",
+                ACTIVE_USER_CONVERSATION_KEY: BOOKING_CONVERSATION_NAME,
+            },
+        )
+
+        await _send_booking_timeout_reminder(context)
+
+        context.bot.send_message.assert_awaited_once_with(
+            chat_id=12345,
+            text=BOOKING_TIMEOUT_REMINDER_TEXT,
+        )
+
+    @pytest.mark.asyncio
+    async def test_reminder_is_skipped_for_a_superseded_session(self):
+        context = self._reminder_context(
+            "bses_old",
+            {
+                BOOKING_SESSION_ID_KEY: "bses_new",
+                ACTIVE_USER_CONVERSATION_KEY: BOOKING_CONVERSATION_NAME,
+            },
+        )
+
+        await _send_booking_timeout_reminder(context)
+
+        context.bot.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reminder_is_skipped_once_the_booking_conversation_is_over(self):
+        context = self._reminder_context("bses_current", {})
+
+        await _send_booking_timeout_reminder(context)
+
+        context.bot.send_message.assert_not_awaited()
+
+
+class TestPrematureBookingTimeout:
+    """A timeout that contradicts the session's own clock must not expire it."""
+
+    @pytest.mark.asyncio
+    async def test_session_that_just_acted_is_left_alone(self, mock_update, mock_context):
+        mock_context.user_data = {
+            "name": "Nikolai",
+            BOOKING_SESSION_ID_KEY: "bses_current",
+            BOOKING_LAST_ACTIVITY_KEY: time.monotonic(),
+        }
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            result = await booking_timeout(mock_update, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_update.message.reply_text.assert_not_called()
+        assert mock_context.user_data["name"] == "Nikolai"
+
+    @pytest.mark.asyncio
+    async def test_session_idle_for_the_whole_window_still_expires(
+        self, mock_update, mock_context
+    ):
+        mock_context.user_data = {
+            "name": "Nikolai",
+            BOOKING_SESSION_ID_KEY: "bses_current",
+            BOOKING_LAST_ACTIVITY_KEY: time.monotonic() - 1000,
+        }
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            result = await booking_timeout(mock_update, mock_context)
+
+        assert result == ConversationHandler.END
+        mock_update.message.reply_text.assert_called_once()
+        assert mock_context.user_data == {}
 
 
 class TestCancelBookingCommand:

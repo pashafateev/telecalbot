@@ -2,6 +2,8 @@
 
 import logging
 import secrets
+import time
+from collections.abc import MutableMapping
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum, auto
 from types import SimpleNamespace
@@ -88,6 +90,18 @@ BOOKING_TIMEOUT_REMINDER_TEXT = (
     "Напоминание: сессия записи скоро истечет из-за неактивности.\n"
     "Пожалуйста, завершите запись или начните заново командой /book."
 )
+ACTIVE_USER_CONVERSATION_KEY = "active_user_conversation"
+BOOKING_CONVERSATION_NAME = "booking"
+# Identifies one booking attempt so timers armed by an earlier attempt can tell
+# that they no longer speak for the session the user is actually in.
+BOOKING_SESSION_ID_KEY = "booking_session_id"
+BOOKING_LAST_ACTIVITY_KEY = "booking_last_activity"
+# python-telegram-bot arms its conversation timeout for the full timeout window
+# on every handled update, and every booking handler stamps activity in the same
+# breath, so the two clocks are only milliseconds apart. This tolerance covers
+# that skew; a timeout arriving while the session is fresher than the window
+# minus this cannot be a real inactivity timeout.
+BOOKING_TIMEOUT_ACTIVITY_GRACE_SECONDS = 5
 BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
     {
         "timezone",
@@ -103,7 +117,9 @@ BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
         "remembered_profile_fields",
         "edit_field",
         "internal_ref",
-        "active_user_conversation",
+        ACTIVE_USER_CONVERSATION_KEY,
+        BOOKING_SESSION_ID_KEY,
+        BOOKING_LAST_ACTIVITY_KEY,
     }
 )
 EMAIL_DOMAIN_CANNOT_RECEIVE_MAIL = "email_domain_cannot_receive_mail"
@@ -286,6 +302,101 @@ def _get_booking_reminder_delay_seconds() -> int | None:
     return reminder_delay
 
 
+def _session_user_data(context: ContextTypes.DEFAULT_TYPE) -> MutableMapping | None:
+    """Return the conversation's user_data, or None when there is none to use."""
+    user_data = getattr(context, "user_data", None)
+    if isinstance(user_data, MutableMapping):
+        return user_data
+    return None
+
+
+def start_booking_session(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """Begin a new booking attempt and return the identifier its timers carry."""
+    user_data = _session_user_data(context)
+    if user_data is None:
+        return None
+
+    session_id = f"bses_{secrets.token_hex(6)}"
+    user_data[BOOKING_SESSION_ID_KEY] = session_id
+    user_data[BOOKING_LAST_ACTIVITY_KEY] = time.monotonic()
+    return session_id
+
+
+def _current_booking_session_id(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    user_data = _session_user_data(context)
+    if user_data is None:
+        return None
+
+    session_id = user_data.get(BOOKING_SESSION_ID_KEY)
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    # A flow resumed without going through /book still deserves working timers.
+    return start_booking_session(context)
+
+
+def _touch_booking_session(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Record that the booking session just handled input from its user."""
+    user_data = _session_user_data(context)
+    if user_data is None:
+        return
+
+    user_data[BOOKING_LAST_ACTIVITY_KEY] = time.monotonic()
+
+
+def seconds_since_booking_activity(context: ContextTypes.DEFAULT_TYPE) -> float | None:
+    """Return how long the booking session has been idle, if it is being tracked."""
+    user_data = _session_user_data(context)
+    if user_data is None:
+        return None
+
+    last_activity = user_data.get(BOOKING_LAST_ACTIVITY_KEY)
+    if isinstance(last_activity, bool) or not isinstance(last_activity, (int, float)):
+        return None
+
+    return max(0.0, time.monotonic() - last_activity)
+
+
+def booking_timeout_is_premature(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Report a conversation timeout that contradicts the session's own clock.
+
+    python-telegram-bot re-arms its timeout job for the full window on every
+    handled update, and every booking handler stamps activity in the same breath,
+    so a real inactivity timeout can only arrive once the session has been idle
+    for the configured timeout. The comparison uses a monotonic clock so that a
+    wall-clock correction on the host cannot make a fresh session look abandoned.
+    """
+    idle_seconds = seconds_since_booking_activity(context)
+    if idle_seconds is None:
+        # Nothing to contradict the framework with, so take the timeout at face value.
+        return False
+
+    timeout_seconds = _coerce_positive_int(
+        getattr(settings, "booking_conversation_timeout_seconds", 900),
+        900,
+    )
+    # Never spend more than half the window on tolerance, so the guard keeps
+    # working when the timeout is configured to something very short.
+    tolerance = min(float(BOOKING_TIMEOUT_ACTIVITY_GRACE_SECONDS), timeout_seconds / 2)
+    return idle_seconds < timeout_seconds - tolerance
+
+
+def _reminder_belongs_to_live_session(
+    context: ContextTypes.DEFAULT_TYPE,
+    session_id: object,
+) -> bool:
+    """Reject reminders armed by a booking attempt the user has moved on from."""
+    if not isinstance(session_id, str) or not session_id:
+        return False
+
+    user_data = _session_user_data(context)
+    if user_data is None:
+        return False
+    if user_data.get(ACTIVE_USER_CONVERSATION_KEY) != BOOKING_CONVERSATION_NAME:
+        return False
+
+    return user_data.get(BOOKING_SESSION_ID_KEY) == session_id
+
+
 def _cancel_booking_timeout_reminder(
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
@@ -300,12 +411,17 @@ def _cancel_booking_timeout_reminder(
 
     for job in get_jobs_by_name(_booking_reminder_job_name(user_id)):
         job.schedule_removal()
+        logger.debug("Cancelled booking timeout reminder user_id=%s", user_id)
 
 
 def _refresh_booking_timeout_reminder(
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
 ) -> None:
+    # Stamped first so the session clock keeps step with every handled update,
+    # even when reminders themselves are switched off by configuration.
+    _touch_booking_session(context)
+
     reminder_delay = _get_booking_reminder_delay_seconds()
     if reminder_delay is None:
         _cancel_booking_timeout_reminder(context, user_id)
@@ -319,12 +435,21 @@ def _refresh_booking_timeout_reminder(
     if run_once is None:
         return
 
+    session_id = _current_booking_session_id(context)
     _cancel_booking_timeout_reminder(context, user_id)
     run_once(
         _send_booking_timeout_reminder,
         when=reminder_delay,
-        data={"user_id": user_id},
+        data={"user_id": user_id, "session_id": session_id},
         name=_booking_reminder_job_name(user_id),
+        # Gives the callback access to user_data so it can check it is still current.
+        user_id=user_id,
+    )
+    logger.debug(
+        "Armed booking timeout reminder user_id=%s session=%s delay_seconds=%s",
+        user_id,
+        session_id,
+        reminder_delay,
     )
 
 
@@ -334,6 +459,26 @@ async def _send_booking_timeout_reminder(context: ContextTypes.DEFAULT_TYPE) -> 
     if user_id is None:
         return
 
+    # Cancelling a job cannot stop one the scheduler has already dispatched, so
+    # the callback decides for itself whether it still speaks for a live session.
+    session_id = job_data.get("session_id")
+    if not _reminder_belongs_to_live_session(context, session_id):
+        user_data = _session_user_data(context) or {}
+        logger.info(
+            "Skipping booking timeout reminder that no longer matches the session "
+            "user_id=%s job_session=%s active_session=%s active_conversation=%s",
+            user_id,
+            session_id,
+            user_data.get(BOOKING_SESSION_ID_KEY),
+            user_data.get(ACTIVE_USER_CONVERSATION_KEY),
+        )
+        return
+
+    logger.info(
+        "Sending booking timeout reminder user_id=%s session=%s",
+        user_id,
+        session_id,
+    )
     try:
         await context.bot.send_message(
             chat_id=user_id,
@@ -374,6 +519,7 @@ async def book_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await _deny_booking_access(update)
         return ConversationHandler.END
 
+    start_booking_session(context)
     _refresh_booking_timeout_reminder(context, update.effective_user.id)
 
     preference_service: UserPreferenceService | None = context.bot_data.get(
@@ -1051,6 +1197,7 @@ async def edit_booking_data(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Show value-free controls for changing effective booking details."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
     keyboard = InlineKeyboardMarkup(
         [
             [
@@ -1076,6 +1223,7 @@ async def edit_booking_field(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Collect one changed booking value without changing saved consent."""
     query = update.callback_query
     await query.answer()
+    _refresh_booking_timeout_reminder(context, query.from_user.id)
     field = query.data.split(":", 1)[1]
 
     if field == "back":
@@ -1303,9 +1451,34 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """End stale booking conversation and ask user to restart."""
+    user_id = update.effective_user.id if update.effective_user else None
+    idle_seconds = seconds_since_booking_activity(context)
+    user_data = _session_user_data(context) or {}
+
+    if booking_timeout_is_premature(context):
+        # The session answered the bot moments ago, so this callback is speaking
+        # for a booking attempt that has already moved on. Saying "expired" here
+        # is what users saw on 2026-08-11: an expiry one message after they typed.
+        logger.warning(
+            "Ignoring premature booking conversation timeout user_id=%s "
+            "update_id=%s session=%s active_conversation=%s idle_seconds=%.1f "
+            "configured_timeout_seconds=%s",
+            user_id,
+            update.update_id,
+            user_data.get(BOOKING_SESSION_ID_KEY),
+            user_data.get(ACTIVE_USER_CONVERSATION_KEY),
+            idle_seconds if idle_seconds is not None else -1.0,
+            getattr(settings, "booking_conversation_timeout_seconds", 900),
+        )
+        return ConversationHandler.END
+
     logger.info(
-        "Booking conversation timed out for user_id=%s",
-        update.effective_user.id if update.effective_user else "unknown",
+        "Booking conversation timed out for user_id=%s update_id=%s session=%s "
+        "idle_seconds=%s",
+        user_id if user_id is not None else "unknown",
+        update.update_id,
+        user_data.get(BOOKING_SESSION_ID_KEY),
+        round(idle_seconds, 1) if idle_seconds is not None else "unknown",
     )
 
     query = update.callback_query
