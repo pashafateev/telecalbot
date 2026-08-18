@@ -102,6 +102,12 @@ BOOKING_LAST_ACTIVITY_KEY = "booking_last_activity"
 # that skew; a timeout arriving while the session is fresher than the window
 # minus this cannot be a real inactivity timeout.
 BOOKING_TIMEOUT_ACTIVITY_GRACE_SECONDS = 5
+# The premature-timeout guard is deliberately silent to the user, so the admin
+# is told instead - otherwise a recurrence goes unnoticed until someone
+# complains, which is how the 2026-08-11 incident was found. Debounced per user
+# so a storm cannot flood the admin chat or trip Telegram's rate limits.
+PREMATURE_TIMEOUT_ALERT_INTERVAL_SECONDS = 3600
+PREMATURE_TIMEOUT_ALERT_STATE_KEY = "premature_booking_timeout_alerts"
 BOOKING_SCOPED_USER_DATA_KEYS = frozenset(
     {
         "timezone",
@@ -380,6 +386,62 @@ def booking_timeout_is_premature(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return idle_seconds < timeout_seconds - tolerance
 
 
+def _premature_timeout_alert_is_due(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int | None,
+) -> bool:
+    bot_data = getattr(context, "bot_data", None)
+    if not isinstance(bot_data, MutableMapping):
+        return True
+
+    sent_at = bot_data.setdefault(PREMATURE_TIMEOUT_ALERT_STATE_KEY, {})
+    if not isinstance(sent_at, MutableMapping):
+        return True
+
+    now = time.monotonic()
+    last_sent = sent_at.get(user_id)
+    if isinstance(last_sent, (int, float)) and not isinstance(last_sent, bool):
+        if now - last_sent < PREMATURE_TIMEOUT_ALERT_INTERVAL_SECONDS:
+            return False
+
+    sent_at[user_id] = now
+    return True
+
+
+async def _alert_admin_of_premature_timeout(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int | None,
+    session_id: object,
+    idle_seconds: float | None,
+) -> None:
+    """Tell the admin that a live session was nearly expired by a stale timeout.
+
+    Carries identifiers only - never the name or email the session is holding.
+    """
+    admin_id = getattr(settings, "admin_telegram_id", None)
+    if not isinstance(admin_id, int) or isinstance(admin_id, bool) or admin_id <= 0:
+        return
+    if not _premature_timeout_alert_is_due(context, user_id):
+        return
+
+    idle_text = f"{idle_seconds:.1f}" if idle_seconds is not None else "unknown"
+    try:
+        await context.bot.send_message(
+            chat_id=admin_id,
+            text=(
+                "Предотвращено преждевременное истечение сессии записи.\n"
+                f"user_id: {user_id}\n"
+                f"session: {session_id}\n"
+                f"idle_seconds: {idle_text}"
+            ),
+        )
+    except Exception as error:
+        logger.warning(
+            "Failed to alert admin about a premature booking timeout error_type=%s",
+            type(error).__name__,
+        )
+
+
 def _reminder_belongs_to_live_session(
     context: ContextTypes.DEFAULT_TYPE,
     session_id: object,
@@ -411,7 +473,7 @@ def _cancel_booking_timeout_reminder(
 
     for job in get_jobs_by_name(_booking_reminder_job_name(user_id)):
         job.schedule_removal()
-        logger.debug("Cancelled booking timeout reminder user_id=%s", user_id)
+        logger.info("Cancelled booking timeout reminder user_id=%s", user_id)
 
 
 def _refresh_booking_timeout_reminder(
@@ -445,7 +507,7 @@ def _refresh_booking_timeout_reminder(
         # Gives the callback access to user_data so it can check it is still current.
         user_id=user_id,
     )
-    logger.debug(
+    logger.info(
         "Armed booking timeout reminder user_id=%s session=%s delay_seconds=%s",
         user_id,
         session_id,
@@ -1469,6 +1531,12 @@ async def booking_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             user_data.get(ACTIVE_USER_CONVERSATION_KEY),
             idle_seconds if idle_seconds is not None else -1.0,
             getattr(settings, "booking_conversation_timeout_seconds", 900),
+        )
+        await _alert_admin_of_premature_timeout(
+            context,
+            user_id,
+            user_data.get(BOOKING_SESSION_ID_KEY),
+            idle_seconds,
         )
         return ConversationHandler.END
 

@@ -1722,6 +1722,70 @@ class TestPrematureBookingTimeout:
         assert mock_context.user_data == {}
 
 
+class TestPrematureTimeoutAdminAlert:
+    """The premature-timeout guard is silent to the user, so tell the admin."""
+
+    @staticmethod
+    def _fresh_session_context(mock_context):
+        mock_context.user_data = {
+            "name": "Nikolai",
+            BOOKING_SESSION_ID_KEY: "bses_current",
+            BOOKING_LAST_ACTIVITY_KEY: time.monotonic(),
+        }
+        mock_context.bot = AsyncMock()
+        mock_context.bot_data = dict(mock_context.bot_data)
+        return mock_context
+
+    @pytest.mark.asyncio
+    async def test_admin_is_told_about_a_premature_timeout(
+        self, mock_update, mock_context
+    ):
+        context = self._fresh_session_context(mock_context)
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.admin_telegram_id = 999
+            await booking_timeout(mock_update, context)
+
+        context.bot.send_message.assert_awaited_once()
+        alert = context.bot.send_message.await_args.kwargs
+        assert alert["chat_id"] == 999
+        assert "12345" in alert["text"]
+        # The user's own data must never reach the admin's chat.
+        assert "Nikolai" not in alert["text"]
+
+    @pytest.mark.asyncio
+    async def test_repeat_alerts_for_one_user_are_debounced(
+        self, mock_update, mock_context
+    ):
+        context = self._fresh_session_context(mock_context)
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.admin_telegram_id = 999
+            await booking_timeout(mock_update, context)
+            context.user_data[BOOKING_LAST_ACTIVITY_KEY] = time.monotonic()
+            await booking_timeout(mock_update, context)
+
+        assert context.bot.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failing_alert_does_not_break_the_guard(
+        self, mock_update, mock_context
+    ):
+        context = self._fresh_session_context(mock_context)
+        context.bot.send_message.side_effect = RuntimeError("telegram is down")
+
+        with patch("app.handlers.booking.settings") as mock_settings:
+            mock_settings.booking_conversation_timeout_seconds = 900
+            mock_settings.admin_telegram_id = 999
+            result = await booking_timeout(mock_update, context)
+
+        assert result == ConversationHandler.END
+        mock_update.message.reply_text.assert_not_called()
+        assert context.user_data["name"] == "Nikolai"
+
+
 class TestCancelBookingCommand:
     @pytest.mark.asyncio
     async def test_requires_whitelist(self, mock_update, mock_context):
