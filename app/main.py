@@ -69,14 +69,20 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def create_application() -> Application:
     """Create and configure the Telegram application."""
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    builder = Application.builder().token(settings.telegram_bot_token)
+    if settings.telegram_api_base_url:
+        builder = builder.base_url(settings.telegram_api_base_url)
+    application = builder.build()
 
     # Inject services
     application.bot_data["whitelist_service"] = WhitelistService(db)
     application.bot_data["user_preference_service"] = UserPreferenceService(db)
     application.bot_data["duration_limit_service"] = DurationLimitService(db)
     application.bot_data["booking_service"] = BookingService(db)
-    application.bot_data["calcom_client"] = CalComClient(api_key=settings.calcom_api_key)
+    application.bot_data["calcom_client"] = CalComClient(
+        api_key=settings.calcom_api_key,
+        base_url=settings.calcom_api_base_url,
+    )
 
     # Register handlers
     application.add_handler(

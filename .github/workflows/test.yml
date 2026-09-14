@@ -43,25 +43,9 @@ jobs:
       - name: Build image
         run: docker build -t telecalbot:ci .
 
-      - name: Import application
-        run: |
-          docker run --rm \
-            -e TELEGRAM_BOT_TOKEN=123:ABC \
-            -e CALCOM_API_KEY=dummy \
-            -e ADMIN_TELEGRAM_ID=1 \
-            -e DATABASE_PATH=/tmp/telecalbot.db \
-            telecalbot:ci \
-            /app/.venv/bin/python -c "import app.main; print('import-ok')"
-
-      - name: Run database migrations
-        run: |
-          docker run --rm \
-            -e TELEGRAM_BOT_TOKEN=123:ABC \
-            -e CALCOM_API_KEY=dummy \
-            -e ADMIN_TELEGRAM_ID=1 \
-            -e DATABASE_PATH=/tmp/telecalbot.db \
-            telecalbot:ci \
-            /app/.venv/bin/python -c "from app.database import db, run_migrations; run_migrations(db); print('migrations-ok')"
+      - name: Exercise container entrypoint and webhook
+        timeout-minutes: 3
+        run: python3 scripts/container_smoke.py --image telecalbot:ci
 
   deploy:
     runs-on: ubuntu-latest
