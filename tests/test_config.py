@@ -31,6 +31,8 @@ def test_config_defaults():
     assert settings.booking_conversation_timeout_seconds == 900
     assert settings.booking_conversation_reminder_seconds_before_timeout == 120
     assert settings.calcom_privacy_email is None
+    assert settings.telegram_api_base_url is None
+    assert settings.calcom_api_base_url is None
     assert settings.telegram_delivery_mode == "polling"
     assert settings.telegram_webhook_url is None
     assert settings.telegram_webhook_path == "/telegram/webhook"
@@ -46,6 +48,17 @@ def test_config_accepts_privacy_email():
     settings = Settings(calcom_privacy_email="private-bookings@example.net")
 
     assert settings.calcom_privacy_email == "private-bookings@example.net"
+
+
+def test_config_accepts_local_api_endpoints(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("TELEGRAM_API_BASE_URL", "http://fake-services:8081/bot")
+    monkeypatch.setenv("CALCOM_API_BASE_URL", "http://fake-services:8081/v2")
+    settings = Settings(_env_file=None)
+
+    assert settings.telegram_api_base_url == "http://fake-services:8081/bot"
+    assert settings.calcom_api_base_url == "http://fake-services:8081/v2"
 
 
 def test_blank_optional_webhook_settings_are_unset():

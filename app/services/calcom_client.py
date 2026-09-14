@@ -112,15 +112,17 @@ class CalComClient:
         self,
         api_key: str,
         cache_ttl: int = 300,
+        base_url: str | None = None,
     ):
         """Initialize the Cal.com client.
 
         Args:
             api_key: Cal.com API key.
             cache_ttl: Cache TTL in seconds (default 300 = 5 minutes).
+            base_url: Optional API endpoint override for a local service or proxy.
         """
         self._client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",

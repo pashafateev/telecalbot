@@ -22,9 +22,11 @@ class Settings(BaseSettings):
 
     # Telegram Bot Configuration (Required)
     telegram_bot_token: str
+    telegram_api_base_url: str | None = None
 
     # Cal.com API Configuration (Required)
     calcom_api_key: str
+    calcom_api_base_url: str | None = None
     calcom_privacy_email: str | None = None
 
     # Admin Configuration (Required)

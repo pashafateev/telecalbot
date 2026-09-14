@@ -135,6 +135,24 @@ curl https://telecalbot.fly.dev/healthz
 curl https://telecalbot.fly.dev/readyz
 ```
 
+## Testing
+
+Run the test suite with `uv run pytest tests/ -v`. The integration tests use real
+application routing and a temporary SQLite database, with local HTTP fakes for
+Telegram and Cal.com.
+
+To run the same container smoke check as CI:
+
+```bash
+docker build -t telecalbot:ci .
+python3 scripts/container_smoke.py --image telecalbot:ci
+```
+
+The smoke check runs the image's default command on an internal Docker network
+with fake credentials. It verifies readiness, authenticated webhook delivery,
+`/start`, booking buttons through Cal.com availability, and a clean SIGTERM exit.
+All test containers and the temporary network are removed on success or failure.
+
 ## Development Status
 
 🚧 **In Development** - MVP Phase
