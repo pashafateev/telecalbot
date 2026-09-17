@@ -8,6 +8,9 @@ primary_region = 'fra'
 
 [env]
 DATABASE_PATH = "/data/telecalbot.db"
+# Durable log history on the volume; Fly itself keeps only a short live tail.
+# Capped at 50MB total so it cannot crowd out the SQLite database beside it.
+LOG_FILE_PATH = "/data/telecalbot.log"
 TELEGRAM_DELIVERY_MODE = "webhook"
 TELEGRAM_WEBHOOK_URL = "https://telecalbot.fly.dev/telegram/webhook"
 TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"

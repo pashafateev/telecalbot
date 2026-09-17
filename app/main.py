@@ -3,6 +3,8 @@
 import logging
 import sys
 import traceback
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from telegram import BotCommand
 from telegram.error import NetworkError
@@ -40,15 +42,58 @@ from app.services.whitelist import WhitelistService
 from app.webhook_server import run_webhook
 
 
+def _build_log_file_handler() -> RotatingFileHandler | None:
+    """Open the rotating log file on the volume, or None if it is unusable."""
+    log_file_path = getattr(settings, "log_file_path", None)
+    if not log_file_path:
+        return None
+
+    try:
+        path = Path(log_file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return RotatingFileHandler(
+            path,
+            maxBytes=settings.log_file_max_bytes,
+            backupCount=settings.log_file_backup_count,
+            encoding="utf-8",
+        )
+    except OSError as error:
+        # A missing or read-only volume must never keep the bot from starting.
+        print(
+            f"Could not open log file {log_file_path!r} "
+            f"({type(error).__name__}); logging to stdout only",
+            file=sys.stderr,
+        )
+        return None
+
+
 def setup_logging() -> None:
     """Configure logging for the application."""
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+
+    file_handler = _build_log_file_handler()
+    if file_handler is not None:
+        handlers.append(file_handler)
+
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
+        handlers=handlers,
+        force=True,
     )
     # Reduce noise from httpx
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    if file_handler is not None:
+        total_cap_mb = (
+            settings.log_file_max_bytes * (settings.log_file_backup_count + 1) / 1_000_000
+        )
+        logging.getLogger(__name__).info(
+            "Durable logging to %s capped at %.0fMB across %s files",
+            file_handler.baseFilename,
+            total_cap_mb,
+            settings.log_file_backup_count + 1,
+        )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
